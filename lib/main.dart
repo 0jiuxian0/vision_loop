@@ -38,13 +38,59 @@ class VisionLoopApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      initialRoute: PlaylistListPage.routeName,
+      initialRoute: MainPage.routeName,
       routes: {
-        PlaylistListPage.routeName: (_) => const PlaylistListPage(),
+        MainPage.routeName: (_) => const MainPage(),
         PlaylistEditPage.routeName: (_) => const PlaylistEditPage(),
         PlayerPage.routeName: (_) => const PlayerPage(),
-        SettingsPage.routeName: (_) => const SettingsPage(),
       },
+    );
+  }
+}
+
+/// 主页面：包含底部导航栏，切换首页和设置页。
+class MainPage extends StatefulWidget {
+  const MainPage({super.key});
+
+  static const routeName = '/';
+
+  @override
+  State<MainPage> createState() => _MainPageState();
+}
+
+class _MainPageState extends State<MainPage> {
+  int _currentIndex = 0;
+
+  final List<Widget> _pages = [
+    const PlaylistListPage(),
+    const SettingsPage(),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _pages,
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home),
+            label: '首页',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.settings),
+            label: '设置',
+          ),
+        ],
+      ),
     );
   }
 }
@@ -76,6 +122,8 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
       _isLoading = true;
     });
     final result = await _repository.loadAll();
+    // 按更新时间排序，最新的排前面
+    result.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     setState(() {
       _playlists = result;
       _isLoading = false;
@@ -84,15 +132,13 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
 
   Future<void> _openEditor({Playlist? playlist}) async {
     final playlistId = playlist?.id;
-    final result = await Navigator.of(context).pushNamed(
+    await Navigator.of(context).pushNamed(
       PlaylistEditPage.routeName,
       arguments: playlistId,
     );
 
-    // 如果编辑页返回 true，表示有保存操作，刷新列表。
-    if (result == true) {
-      await _loadPlaylists();
-    }
+    // 无论返回什么值，都刷新列表（因为编辑页会实时保存，包括全面屏手势返回）
+    await _loadPlaylists();
   }
 
   @override
@@ -105,11 +151,12 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
           ? const Center(child: CircularProgressIndicator())
           : _playlists.isEmpty
               ? const Center(
-                  child: Text('暂无幻灯片项目，点击下方按钮新建一个吧。'),
+                  child: Text('暂无幻灯片项目，点击左下角按钮新建一个吧。'),
                 )
               : ListView.separated(
                   itemCount: _playlists.length,
                   separatorBuilder: (_, __) => const Divider(height: 1),
+                  padding: const EdgeInsets.only(bottom: 80), // 底部 padding，避免被悬浮按钮挡住
                   itemBuilder: (context, index) {
                     final playlist = _playlists[index];
                     return ListTile(
@@ -152,39 +199,12 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
                     );
                   },
                 ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          border: Border(
-            top: BorderSide(
-              color: Theme.of(context).dividerColor,
-              width: 1,
-            ),
-          ),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).pushNamed(SettingsPage.routeName);
-                },
-                icon: const Icon(Icons.settings),
-                label: const Text('设置'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: () => _openEditor(),
-                icon: const Icon(Icons.add),
-                label: const Text('新建幻灯片'),
-              ),
-            ),
-          ],
-        ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openEditor(),
+        icon: const Icon(Icons.add),
+        label: const Text('新建幻灯片'),
       ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
     );
   }
 }
@@ -232,11 +252,13 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
         items: <MediaItem>[],
       );
     setState(() {
-        _playlist = playlist;
-        _nameController.text = '';
-        _isLoading = false;
-      });
-      return;
+      _playlist = playlist;
+      _nameController.text = '';
+      _isLoading = false;
+    });
+    // 监听名称变化，实时保存
+    _nameController.addListener(_onNameChanged);
+    return;
     }
 
     // 编辑已有项目。
@@ -257,6 +279,17 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
       _nameController.text = existing.name;
       _items = List<MediaItem>.from(existing.items);
       _isLoading = false;
+    });
+    // 监听名称变化，实时保存
+    _nameController.addListener(_onNameChanged);
+  }
+
+  void _onNameChanged() {
+    // 延迟保存，避免频繁保存
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        _autoSave();
+      }
     });
   }
 
@@ -304,6 +337,8 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
       _items.addAll(newItems);
       _playlist = _playlist?.copyWith(items: _items);
     });
+    // 实时保存
+    _autoSave();
   }
 
   Future<void> _addVideo() async {
@@ -342,6 +377,8 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
       _items.add(newItem);
       _playlist = _playlist?.copyWith(items: _items);
     });
+    // 实时保存
+    _autoSave();
   }
 
   void _removeItem(int index) {
@@ -353,6 +390,8 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
       }
       _playlist = _playlist?.copyWith(items: _items);
     });
+    // 实时保存
+    _autoSave();
   }
 
   /// 使用原生Android解码器解码图片（编辑页使用）
@@ -643,22 +682,33 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
     }
   }
 
-  Future<void> _save() async {
+  /// 格式化日期时间为字符串 yyyy-MM-dd HH:mm:ss
+  String _formatDateTime(DateTime dateTime) {
+    final year = dateTime.year.toString();
+    final month = dateTime.month.toString().padLeft(2, '0');
+    final day = dateTime.day.toString().padLeft(2, '0');
+    final hour = dateTime.hour.toString().padLeft(2, '0');
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final second = dateTime.second.toString().padLeft(2, '0');
+    return '$year-$month-$day $hour:$minute:$second';
+  }
+
+  /// 实时保存播放列表
+  Future<void> _autoSave() async {
     final current = _playlist;
     if (current == null) return;
 
+    final nameText = _nameController.text.trim();
+    final name = nameText.isEmpty ? _formatDateTime(DateTime.now()) : nameText;
+
     final updated = current.copyWith(
-      name: _nameController.text.trim().isEmpty
-          ? '未命名项目'
-          : _nameController.text.trim(),
+      name: name,
       updatedAt: DateTime.now(),
       items: _items,
     );
 
     await _repository.upsert(updated);
-
-    if (!mounted) return;
-    Navigator.of(context).pop(true);
+    debugPrint('[EditPage] _autoSave: 自动保存完成 - id=${updated.id}, name=${updated.name}');
   }
 
   @override
@@ -667,12 +717,32 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
     super.dispose();
   }
 
+  /// 处理返回操作，确保返回时刷新首页列表
+  Future<bool> _onWillPop() async {
+    // 离开前保存一次
+    await _autoSave();
+    // 返回 true 表示允许返回，并且会触发首页刷新
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('编辑幻灯片'),
-      ),
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('编辑幻灯片'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () async {
+              // 离开前保存一次
+              await _autoSave();
+              if (mounted) {
+                Navigator.of(context).pop(true);
+              }
+            },
+          ),
+        ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Column(
@@ -698,6 +768,7 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
                           itemCount: _items.length,
                           separatorBuilder: (_, __) =>
                               const Divider(height: 1),
+                          padding: const EdgeInsets.only(bottom: 240), // 底部 padding，避免被3个悬浮按钮挡住（每个按钮高度约56，加上间距）
                           itemBuilder: (context, index) {
                             final item = _items[index];
                             return ListTile(
@@ -714,82 +785,43 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
                           },
                         ),
                 ),
-                // 底部操作栏：返回、播放、保存
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).scaffoldBackgroundColor,
-                    border: Border(
-                      top: BorderSide(
-                        color: Theme.of(context).dividerColor,
-                        width: 1,
-                      ),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => Navigator.of(context).pop(),
-                          icon: const Icon(Icons.arrow_back),
-                          label: const Text('返回'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _isLoading || _playlist == null
-                              ? null
-                              : () {
-                                  Navigator.of(context).pushNamed(
-                                    PlayerPage.routeName,
-                                    arguments: _playlist!.id,
-                                  );
-                                },
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('播放'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _isLoading ? null : _save,
-                          icon: const Icon(Icons.check),
-                          label: const Text('保存'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Theme.of(context).primaryColor,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // 添加媒体按钮
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _addImages,
-                          icon: const Icon(Icons.photo),
-                          label: const Text('添加图片'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _addVideo,
-                          icon: const Icon(Icons.videocam),
-                          label: const Text('添加视频'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             ),
+      floatingActionButton: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          FloatingActionButton(
+            heroTag: 'play',
+            onPressed: _isLoading || _playlist == null
+                ? null
+                : () {
+                    Navigator.of(context).pushNamed(
+                      PlayerPage.routeName,
+                      arguments: _playlist!.id,
+                    );
+                  },
+            child: const Icon(Icons.play_arrow),
+            tooltip: '播放',
+          ),
+          const SizedBox(height: 16),
+          FloatingActionButton(
+            heroTag: 'video',
+            onPressed: _addVideo,
+            child: const Icon(Icons.videocam),
+            tooltip: '添加视频',
+          ),
+          const SizedBox(height: 16),
+          FloatingActionButton(
+            heroTag: 'image',
+            onPressed: _addImages,
+            child: const Icon(Icons.photo),
+            tooltip: '添加图片',
+          ),
+        ],
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
+      ),
     );
   }
 }
@@ -1758,6 +1790,17 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _loadSettings();
+    // 监听切换间隔输入变化，实时保存
+    _durationController.addListener(_onDurationChanged);
+  }
+
+  void _onDurationChanged() {
+    // 延迟保存，避免频繁保存
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        _autoSaveSettings();
+      }
+    });
   }
 
   Future<void> _loadSettings() async {
@@ -1769,16 +1812,14 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
-  Future<void> _saveSettings() async {
+  /// 实时保存设置
+  Future<void> _autoSaveSettings() async {
     if (_settings == null) return;
 
     final durationText = _durationController.text.trim();
     final duration = int.tryParse(durationText);
     if (duration == null || duration < 1) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('切换间隔必须是大于0的整数')),
-      );
+      // 如果输入无效，不保存，但也不报错（可能是正在输入中）
       return;
     }
 
@@ -1787,12 +1828,7 @@ class _SettingsPageState extends State<SettingsPage> {
       slideDurationSeconds: duration,
     );
     await _repository.save(updated);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('设置已保存')),
-    );
-    Navigator.of(context).pop();
+    debugPrint('[SettingsPage] _autoSaveSettings: 自动保存完成');
   }
 
   @override
@@ -1888,6 +1924,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                       playbackMode: value,
                                     );
                                   });
+                                  // 实时保存
+                                  _autoSaveSettings();
                                 }
                               },
                             ),
@@ -1902,6 +1940,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                       playbackMode: value,
                                     );
                                   });
+                                  // 实时保存
+                                  _autoSaveSettings();
                                 }
                               },
                             ),
@@ -1916,6 +1956,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                       playbackMode: value,
                                     );
                                   });
+                                  // 实时保存
+                                  _autoSaveSettings();
                                 }
                               },
                             ),
@@ -1952,21 +1994,6 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
         ),
       ),
-                    ),
-                    const SizedBox(height: 24),
-                    // 保存按钮
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: ElevatedButton.icon(
-                        onPressed: () async {
-                          await _saveSettings();
-                        },
-                        icon: const Icon(Icons.check),
-                        label: const Text('保存设置'),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                      ),
                     ),
                   ],
       ),
