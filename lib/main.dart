@@ -14,6 +14,9 @@ import 'services/playlist_repository.dart';
 import 'services/settings_repository.dart';
 import 'utils/id_generator.dart';
 
+// Platform Channel 用于调用原生图片解码器
+const MethodChannel _imageDecoderChannel = MethodChannel('com.example.vision_loop/image_decoder');
+
 void main() {
   runApp(const VisionLoopApp());
 }
@@ -228,7 +231,7 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
         updatedAt: now,
         items: <MediaItem>[],
       );
-      setState(() {
+    setState(() {
         _playlist = playlist;
         _nameController.text = '';
         _isLoading = false;
@@ -352,6 +355,30 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
     });
   }
 
+  /// 使用原生Android解码器解码图片（编辑页使用）
+  Future<Uint8List?> _decodeImageWithNativeForEdit(String imagePath) async {
+    try {
+      debugPrint('[EditPage] _decodeImageWithNativeForEdit: 尝试使用原生解码器 - path=$imagePath');
+      final result = await _imageDecoderChannel.invokeMethod<Uint8List>('decodeImage', {
+        'path': imagePath,
+      });
+      if (result != null) {
+        debugPrint('[EditPage] _decodeImageWithNativeForEdit: 原生解码成功 - path=$imagePath, size=${result.length} bytes');
+        return result;
+      } else {
+        debugPrint('[EditPage] _decodeImageWithNativeForEdit: 原生解码返回null - path=$imagePath');
+        return null;
+      }
+    } on PlatformException catch (e) {
+      debugPrint('[EditPage] _decodeImageWithNativeForEdit: 原生解码失败 - path=$imagePath, error=${e.code}: ${e.message}');
+      return null;
+    } catch (e, stackTrace) {
+      debugPrint('[EditPage] _decodeImageWithNativeForEdit: 原生解码异常 - path=$imagePath, error=$e');
+      debugPrint('[EditPage] _decodeImageWithNativeForEdit: 堆栈: $stackTrace');
+      return null;
+    }
+  }
+
   /// 读取图片文件的字节数据（编辑页使用）
   Future<Uint8List?> _loadImageBytes(File file) async {
     try {
@@ -454,9 +481,55 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
                 return child;
               },
               errorBuilder: (context, error, stackTrace) {
-                debugPrint('[EditPage] _buildMediaThumbnail: 缩略图解码失败！ - path=${item.uri}, error=$error');
-                debugPrint('[EditPage] _buildMediaThumbnail: 错误堆栈: $stackTrace');
-                return const Icon(Icons.broken_image);
+                debugPrint('[EditPage] _buildMediaThumbnail: Flutter解码失败！尝试原生解码器 - path=${item.uri}, error=$error');
+                
+                // Flutter解码失败，尝试原生解码器
+                return FutureBuilder<Uint8List?>(
+                  future: _decodeImageWithNativeForEdit(item.uri),
+                  builder: (context, nativeSnapshot) {
+                    if (nativeSnapshot.connectionState == ConnectionState.waiting) {
+                      return Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          color: Colors.grey.shade800,
+                        ),
+                        child: const Center(
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                    
+                    if (nativeSnapshot.hasData && nativeSnapshot.data != null) {
+                      debugPrint('[EditPage] _buildMediaThumbnail: 原生解码器成功 - path=${item.uri}');
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.memory(
+                          nativeSnapshot.data!,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            debugPrint('[EditPage] _buildMediaThumbnail: 原生解码器结果也无法显示 - path=${item.uri}');
+                            return const Icon(Icons.broken_image);
+                          },
+                        ),
+                      );
+                    }
+                    
+                    // 原生解码器也失败
+                    debugPrint('[EditPage] _buildMediaThumbnail: 原生解码器也失败 - path=${item.uri}');
+                    return const Icon(Icons.broken_image);
+                  },
+                );
               },
             ),
           );
@@ -1295,6 +1368,42 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  /// 使用原生Android解码器解码图片
+  Future<Uint8List?> _decodeImageWithNative(String imagePath) async {
+    try {
+      debugPrint('[Player] _decodeImageWithNative: 尝试使用原生解码器 - path=$imagePath');
+      final result = await _imageDecoderChannel.invokeMethod<Uint8List>('decodeImage', {
+        'path': imagePath,
+      });
+      if (result != null) {
+        debugPrint('[Player] _decodeImageWithNative: 原生解码成功 - path=$imagePath, size=${result.length} bytes');
+        return result;
+      } else {
+        debugPrint('[Player] _decodeImageWithNative: 原生解码返回null - path=$imagePath');
+        return null;
+      }
+    } on PlatformException catch (e) {
+      debugPrint('[Player] _decodeImageWithNative: 原生解码失败 - path=$imagePath, error=${e.code}: ${e.message}');
+      return null;
+    } catch (e, stackTrace) {
+      debugPrint('[Player] _decodeImageWithNative: 原生解码异常 - path=$imagePath, error=$e');
+      debugPrint('[Player] _decodeImageWithNative: 堆栈: $stackTrace');
+      return null;
+    }
+  }
+
+  /// 检查文件路径是否是系统缓存路径
+  bool _isSystemCachePath(String path) {
+    // 如果文件名是纯数字.jpg，可能是系统处理的副本
+    final fileName = path.split('/').last;
+    // 检查是否是纯数字开头的文件名（如 1000029412.jpg）
+    if (RegExp(r'^\d+\.(jpg|jpeg|png)$', caseSensitive: false).hasMatch(fileName)) {
+      debugPrint('[Player] _isSystemCachePath: 检测到系统缓存路径格式 - path=$path, fileName=$fileName');
+      return true;
+    }
+    return false;
+  }
+
   /// 构建图片Widget（从字节数据）
   Widget _buildImageWidget({
     required MediaItem item,
@@ -1318,6 +1427,69 @@ class _PlayerPageState extends State<PlayerPage>
     }
     debugPrint('[Player] _buildImageWidget: 检测到的图片格式 - path=${item.uri}, format=$format');
     
+    // 如果是系统缓存路径格式，直接使用原生解码器
+    final isSystemCache = _isSystemCachePath(item.uri);
+    
+    if (isSystemCache) {
+      debugPrint('[Player] _buildImageWidget: 检测到系统缓存路径，使用原生解码器 - path=${item.uri}');
+      return FutureBuilder<Uint8List?>(
+        future: _decodeImageWithNative(item.uri),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(color: Colors.white),
+            );
+          }
+          
+          if (snapshot.hasError) {
+            debugPrint('[Player] _buildImageWidget: 原生解码器失败 - path=${item.uri}, error=${snapshot.error}');
+            return Container(
+              color: Colors.black,
+              alignment: Alignment.center,
+              child: const Icon(
+                Icons.broken_image,
+                color: Colors.white54,
+                size: 64,
+              ),
+            );
+          }
+          
+          final nativeBytes = snapshot.data;
+          if (nativeBytes == null || nativeBytes.isEmpty) {
+            debugPrint('[Player] _buildImageWidget: 原生解码器返回空数据 - path=${item.uri}');
+            return Container(
+              color: Colors.black,
+              alignment: Alignment.center,
+              child: const Icon(
+                Icons.broken_image,
+                color: Colors.white54,
+                size: 64,
+              ),
+            );
+          }
+          
+          debugPrint('[Player] _buildImageWidget: 原生解码器成功，显示图片 - path=${item.uri}, size=${nativeBytes.length} bytes');
+          return Image.memory(
+            nativeBytes,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              debugPrint('[Player] _buildImageWidget: 原生解码器结果也无法显示 - path=${item.uri}');
+              return Container(
+                color: Colors.black,
+                alignment: Alignment.center,
+                child: const Icon(
+                  Icons.broken_image,
+                  color: Colors.white54,
+                  size: 64,
+                ),
+              );
+            },
+          );
+        },
+      );
+    }
+    
+    // 普通路径，先尝试Flutter解码器
     return Image.memory(
       bytes,
       fit: BoxFit.contain,
@@ -1332,16 +1504,65 @@ class _PlayerPageState extends State<PlayerPage>
         return child;
       },
       errorBuilder: (context, error, stackTrace) {
-        debugPrint('[Player] _buildImageWidget: 图片解码失败！ - path=${item.uri}, error=$error');
-        debugPrint('[Player] _buildImageWidget: 错误堆栈: $stackTrace');
-        return Container(
-          color: Colors.black,
-          alignment: Alignment.center,
-          child: const Icon(
-            Icons.broken_image,
-            color: Colors.white54,
-            size: 64,
-          ),
+        debugPrint('[Player] _buildImageWidget: Flutter解码失败！尝试原生解码器 - path=${item.uri}, error=$error');
+        
+        // Flutter解码失败，尝试原生解码器作为降级方案
+        return FutureBuilder<Uint8List?>(
+          future: _decodeImageWithNative(item.uri),
+          builder: (context, nativeSnapshot) {
+            if (nativeSnapshot.connectionState == ConnectionState.waiting) {
+              return Container(
+                color: Colors.black,
+                alignment: Alignment.center,
+                child: const CircularProgressIndicator(color: Colors.white),
+              );
+            }
+            
+            if (nativeSnapshot.hasError) {
+              debugPrint('[Player] _buildImageWidget: 原生解码器也失败 - path=${item.uri}, error=${nativeSnapshot.error}');
+              return Container(
+                color: Colors.black,
+                alignment: Alignment.center,
+                child: const Icon(
+                  Icons.broken_image,
+                  color: Colors.white54,
+                  size: 64,
+                ),
+              );
+            }
+            
+            final nativeBytes = nativeSnapshot.data;
+            if (nativeBytes == null || nativeBytes.isEmpty) {
+              debugPrint('[Player] _buildImageWidget: 原生解码器返回空数据 - path=${item.uri}');
+              return Container(
+                color: Colors.black,
+                alignment: Alignment.center,
+                child: const Icon(
+                  Icons.broken_image,
+                  color: Colors.white54,
+                  size: 64,
+                ),
+              );
+            }
+            
+            debugPrint('[Player] _buildImageWidget: 原生解码器成功，显示图片 - path=${item.uri}, size=${nativeBytes.length} bytes');
+            return Image.memory(
+              nativeBytes,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) {
+                debugPrint('[Player] _buildImageWidget: 原生解码器结果也无法显示 - path=${item.uri}');
+                return Container(
+                  color: Colors.black,
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.broken_image,
+                    color: Colors.white54,
+                    size: 64,
+                  ),
+                );
+              },
+            );
+          },
         );
       },
     );
@@ -1474,9 +1695,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     Card(
                       child: Padding(
                         padding: const EdgeInsets.all(16),
-                        child: Column(
+        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
+          children: [
                             const Text(
                               '播放模式',
                               style: TextStyle(
@@ -1512,10 +1733,10 @@ class _SettingsPageState extends State<SettingsPage> {
                                   });
                                 }
                               },
-                            ),
-                          ],
-                        ),
-                      ),
+            ),
+          ],
+        ),
+      ),
                     ),
                     const SizedBox(height: 16),
                     // 切换间隔设置
