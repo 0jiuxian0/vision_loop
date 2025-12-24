@@ -6,6 +6,13 @@ enum PlaybackOrientation {
   landscape, // 横屏
 }
 
+/// 播放顺序模式。
+enum PlaybackMode {
+  sequential, // 顺序播放
+  reverse, // 倒序播放
+  random, // 随机播放
+}
+
 PlaybackOrientation playbackOrientationFromString(String value) {
   switch (value) {
     case 'portrait':
@@ -31,6 +38,7 @@ class AppSettings {
   AppSettings({
     this.playbackOrientation = PlaybackOrientation.portrait,
     this.slideDurationSeconds = 3,
+    this.playbackMode = PlaybackMode.sequential,
   });
 
   /// 播放模式：横屏或竖屏。
@@ -39,13 +47,18 @@ class AppSettings {
   /// 图片切换间隔（秒）。
   final int slideDurationSeconds;
 
+  /// 播放顺序模式。
+  final PlaybackMode playbackMode;
+
   AppSettings copyWith({
     PlaybackOrientation? playbackOrientation,
     int? slideDurationSeconds,
+    PlaybackMode? playbackMode,
   }) {
     return AppSettings(
       playbackOrientation: playbackOrientation ?? this.playbackOrientation,
       slideDurationSeconds: slideDurationSeconds ?? this.slideDurationSeconds,
+      playbackMode: playbackMode ?? this.playbackMode,
     );
   }
 
@@ -53,6 +66,7 @@ class AppSettings {
     return {
       'playbackOrientation': playbackOrientationToString(playbackOrientation),
       'slideDurationSeconds': slideDurationSeconds,
+      'playbackMode': _playbackModeToString(playbackMode),
     };
   }
 
@@ -62,7 +76,34 @@ class AppSettings {
         json['playbackOrientation'] as String? ?? 'portrait',
       ),
       slideDurationSeconds: json['slideDurationSeconds'] as int? ?? 3,
+      playbackMode: _playbackModeFromString(
+        json['playbackMode'] as String? ?? 'sequential',
+      ),
     );
+  }
+
+  static String _playbackModeToString(PlaybackMode mode) {
+    switch (mode) {
+      case PlaybackMode.sequential:
+        return 'sequential';
+      case PlaybackMode.reverse:
+        return 'reverse';
+      case PlaybackMode.random:
+        return 'random';
+    }
+  }
+
+  static PlaybackMode _playbackModeFromString(String value) {
+    switch (value) {
+      case 'sequential':
+        return PlaybackMode.sequential;
+      case 'reverse':
+        return PlaybackMode.reverse;
+      case 'random':
+        return PlaybackMode.random;
+      default:
+        return PlaybackMode.sequential;
+    }
   }
 
   /// 从 JSON 字符串解码。

@@ -8,7 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 
-import 'models/app_settings.dart';
+import 'models/app_settings.dart' show AppSettings, PlaybackOrientation, PlaybackMode;
 import 'models/playlist_models.dart';
 import 'services/playlist_repository.dart';
 import 'services/settings_repository.dart';
@@ -821,6 +821,9 @@ class _PlayerPageState extends State<PlayerPage>
   
   // 预加载缓存：存储图片的字节数据，key为MediaItem的id
   final Map<String, Uint8List> _preloadedImageCache = {};
+  
+  // 随机播放模式：已播放的索引列表（用于避免重复）
+  final List<int> _randomPlayedIndices = [];
 
   @override
   void initState() {
@@ -847,6 +850,9 @@ class _PlayerPageState extends State<PlayerPage>
     final playlist =
         all.firstWhere((p) => p.id == playlistId, orElse: () => all.first);
     final settings = await _settingsRepository.load();
+    
+    // 重置随机播放历史
+    _randomPlayedIndices.clear();
 
     // 根据设置锁定屏幕方向
     if (settings.playbackOrientation == PlaybackOrientation.landscape) {
@@ -1059,23 +1065,91 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  /// 根据播放模式计算下一个索引
+  int _calculateNextIndex() {
+    if (_items.isEmpty) return 0;
+    
+    final mode = _settings?.playbackMode ?? PlaybackMode.sequential;
+    final loop = _playlist?.settings.loop ?? true;
+    
+    switch (mode) {
+      case PlaybackMode.sequential:
+        var nextIndex = _currentIndex + 1;
+        if (nextIndex >= _items.length) {
+          if (!loop) {
+            return _currentIndex; // 不循环，停留在当前位置
+          }
+          nextIndex = 0;
+        }
+        return nextIndex;
+        
+      case PlaybackMode.reverse:
+        var nextIndex = _currentIndex - 1;
+        if (nextIndex < 0) {
+          if (!loop) {
+            return _currentIndex; // 不循环，停留在当前位置
+          }
+          nextIndex = _items.length - 1;
+        }
+        return nextIndex;
+        
+      case PlaybackMode.random:
+        // 如果所有项都已播放过，重置列表
+        if (_randomPlayedIndices.length >= _items.length) {
+          debugPrint('[Player] _calculateNextIndex: 随机模式 - 所有项已播放，重置列表');
+          _randomPlayedIndices.clear();
+        }
+        
+        // 生成未播放的索引列表
+        final unplayedIndices = List.generate(
+          _items.length,
+          (index) => index,
+        ).where((index) => !_randomPlayedIndices.contains(index)).toList();
+        
+        if (unplayedIndices.isEmpty) {
+          // 如果所有项都已播放，随机选择一个
+          return _currentIndex;
+        }
+        
+        // 从未播放的索引中随机选择一个
+        final random = unplayedIndices[DateTime.now().millisecondsSinceEpoch % unplayedIndices.length];
+        return random;
+    }
+  }
+
   Future<void> _next() async {
     debugPrint('[Player] _next: 开始切换到下一项, 当前index=$_currentIndex, 总数量=${_items.length}');
     if (_items.isEmpty) {
       debugPrint('[Player] _next: 媒体列表为空，退出');
       return;
     }
+    
+    final mode = _settings?.playbackMode ?? PlaybackMode.sequential;
     final loop = _playlist?.settings.loop ?? true;
-    var nextIndex = _currentIndex + 1;
-    if (nextIndex >= _items.length) {
+    
+    final nextIndex = _calculateNextIndex();
+    
+    // 检查是否到达末尾且不循环
+    if (nextIndex == _currentIndex && mode == PlaybackMode.sequential) {
       if (!loop) {
         debugPrint('[Player] _next: 到达末尾且未开启循环，退出');
         return;
       }
-      nextIndex = 0;
-      debugPrint('[Player] _next: 到达末尾，循环到开头, nextIndex=$nextIndex');
     }
-    debugPrint('[Player] _next: 准备切换到index=$nextIndex');
+    
+    debugPrint('[Player] _next: 播放模式=${mode.toString().split('.').last}, 准备切换到index=$nextIndex');
+    
+    // 如果是随机模式，记录已播放的索引
+    if (mode == PlaybackMode.random) {
+      if (!_randomPlayedIndices.contains(_currentIndex)) {
+        _randomPlayedIndices.add(_currentIndex);
+      }
+      if (!_randomPlayedIndices.contains(nextIndex)) {
+        _randomPlayedIndices.add(nextIndex);
+      }
+      debugPrint('[Player] _next: 随机模式 - 已播放索引列表: $_randomPlayedIndices');
+    }
+    
     // 先更新索引，触发UI重建，然后再启动新的媒体
     setState(() {
       _currentIndex = nextIndex;
@@ -1089,18 +1163,66 @@ class _PlayerPageState extends State<PlayerPage>
     _preloadNextImage();
   }
 
+  /// 根据播放模式计算上一个索引
+  int _calculatePreviousIndex() {
+    if (_items.isEmpty) return 0;
+    
+    final mode = _settings?.playbackMode ?? PlaybackMode.sequential;
+    final loop = _playlist?.settings.loop ?? true;
+    
+    switch (mode) {
+      case PlaybackMode.sequential:
+        var prevIndex = _currentIndex - 1;
+        if (prevIndex < 0) {
+          if (!loop) {
+            return _currentIndex; // 不循环，停留在当前位置
+          }
+          prevIndex = _items.length - 1;
+        }
+        return prevIndex;
+        
+      case PlaybackMode.reverse:
+        var prevIndex = _currentIndex + 1;
+        if (prevIndex >= _items.length) {
+          if (!loop) {
+            return _currentIndex; // 不循环，停留在当前位置
+          }
+          prevIndex = 0;
+        }
+        return prevIndex;
+        
+      case PlaybackMode.random:
+        // 随机模式下，上一个应该是随机播放历史中的上一个
+        // 如果历史为空，随机选择一个
+        if (_randomPlayedIndices.isEmpty || _randomPlayedIndices.length == 1) {
+          final random = DateTime.now().millisecondsSinceEpoch % _items.length;
+          return random;
+        }
+        
+        // 找到当前索引在历史中的位置
+        final currentPos = _randomPlayedIndices.indexOf(_currentIndex);
+        if (currentPos > 0) {
+          // 返回历史中的上一个
+          return _randomPlayedIndices[currentPos - 1];
+        } else {
+          // 如果当前是第一个，返回历史中的最后一个
+          return _randomPlayedIndices[_randomPlayedIndices.length - 1];
+        }
+    }
+  }
+
   Future<void> _previous() async {
     debugPrint('[Player] _previous: 开始切换到上一项, 当前index=$_currentIndex, 总数量=${_items.length}');
     if (_items.isEmpty) {
       debugPrint('[Player] _previous: 媒体列表为空，退出');
       return;
     }
-    var prevIndex = _currentIndex - 1;
-    if (prevIndex < 0) {
-      prevIndex = _items.length - 1;
-      debugPrint('[Player] _previous: 到达开头，循环到末尾, prevIndex=$prevIndex');
-    }
-    debugPrint('[Player] _previous: 准备切换到index=$prevIndex');
+    
+    final mode = _settings?.playbackMode ?? PlaybackMode.sequential;
+    final prevIndex = _calculatePreviousIndex();
+    
+    debugPrint('[Player] _previous: 播放模式=${mode.toString().split('.').last}, 准备切换到index=$prevIndex');
+    
     // 先更新索引，触发UI重建，然后再启动新的媒体
     setState(() {
       _currentIndex = prevIndex;
@@ -1660,6 +1782,7 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
 
+    // 保存所有设置（包括播放方向、播放模式、切换间隔）
     final updated = _settings!.copyWith(
       slideDurationSeconds: duration,
     );
@@ -1691,7 +1814,7 @@ class _SettingsPageState extends State<SettingsPage> {
               : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    // 播放模式设置
+                    // 播放方向设置
                     Card(
                       child: Padding(
                         padding: const EdgeInsets.all(16),
@@ -1699,7 +1822,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
                             const Text(
-                              '播放模式',
+                              '播放方向',
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
@@ -1737,6 +1860,68 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
         ),
       ),
+                    ),
+                    const SizedBox(height: 16),
+                    // 播放顺序模式设置
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              '播放顺序',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            RadioListTile<PlaybackMode>(
+                              title: const Text('顺序'),
+                              value: PlaybackMode.sequential,
+                              groupValue: _settings!.playbackMode,
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setState(() {
+                                    _settings = _settings!.copyWith(
+                                      playbackMode: value,
+                                    );
+                                  });
+                                }
+                              },
+                            ),
+                            RadioListTile<PlaybackMode>(
+                              title: const Text('倒序'),
+                              value: PlaybackMode.reverse,
+                              groupValue: _settings!.playbackMode,
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setState(() {
+                                    _settings = _settings!.copyWith(
+                                      playbackMode: value,
+                                    );
+                                  });
+                                }
+                              },
+                            ),
+                            RadioListTile<PlaybackMode>(
+                              title: const Text('随机'),
+                              value: PlaybackMode.random,
+                              groupValue: _settings!.playbackMode,
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setState(() {
+                                    _settings = _settings!.copyWith(
+                                      playbackMode: value,
+                                    );
+                                  });
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 16),
                     // 切换间隔设置
