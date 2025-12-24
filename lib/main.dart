@@ -1818,17 +1818,14 @@ class _SettingsPageState extends State<SettingsPage> {
 
     final durationText = _durationController.text.trim();
     final duration = int.tryParse(durationText);
-    if (duration == null || duration < 1) {
-      // 如果输入无效，不保存，但也不报错（可能是正在输入中）
-      return;
-    }
-
-    // 保存所有设置（包括播放方向、播放模式、切换间隔）
+    
+    // 如果 duration 无效，使用当前设置的值（不更新 duration）
+    // 这样即使 duration 输入框无效，也能保存播放方向和播放模式
     final updated = _settings!.copyWith(
-      slideDurationSeconds: duration,
+      slideDurationSeconds: (duration != null && duration >= 1) ? duration : _settings!.slideDurationSeconds,
     );
     await _repository.save(updated);
-    debugPrint('[SettingsPage] _autoSaveSettings: 自动保存完成');
+    debugPrint('[SettingsPage] _autoSaveSettings: 自动保存完成 - orientation=${updated.playbackOrientation}, mode=${updated.playbackMode}, duration=${updated.slideDurationSeconds}');
   }
 
   @override
@@ -1876,6 +1873,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                       playbackOrientation: value,
                                     );
                                   });
+                                  // 实时保存
+                                  _autoSaveSettings();
                                 }
                               },
                             ),
@@ -1890,6 +1889,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                       playbackOrientation: value,
                                     );
                                   });
+                                  // 实时保存
+                                  _autoSaveSettings();
                                 }
                               },
             ),

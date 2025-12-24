@@ -20,7 +20,7 @@ PlaybackOrientation playbackOrientationFromString(String value) {
     case 'landscape':
       return PlaybackOrientation.landscape;
     default:
-      return PlaybackOrientation.portrait;
+      return PlaybackOrientation.landscape;
   }
 }
 
@@ -36,7 +36,7 @@ String playbackOrientationToString(PlaybackOrientation orientation) {
 /// 全局应用设置。
 class AppSettings {
   AppSettings({
-    this.playbackOrientation = PlaybackOrientation.portrait,
+    this.playbackOrientation = PlaybackOrientation.landscape,
     this.slideDurationSeconds = 3,
     this.playbackMode = PlaybackMode.sequential,
   });
@@ -73,7 +73,7 @@ class AppSettings {
   factory AppSettings.fromJson(Map<String, dynamic> json) {
     return AppSettings(
       playbackOrientation: playbackOrientationFromString(
-        json['playbackOrientation'] as String? ?? 'portrait',
+        json['playbackOrientation'] as String? ?? 'landscape',
       ),
       slideDurationSeconds: json['slideDurationSeconds'] as int? ?? 3,
       playbackMode: _playbackModeFromString(
