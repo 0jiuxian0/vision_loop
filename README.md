@@ -1,16 +1,69 @@
-# vision_loop
+# Vision Loop
 
-A new Flutter project.
+一个跨平台的图片/视频幻灯片播放器应用，支持本地相册媒体管理和自动轮播播放。
 
-## Getting Started
+## 功能特性
 
-This project is a starting point for a Flutter application.
+- **多项目管理**：创建、编辑、删除多个幻灯片项目
+- **媒体管理**：从本地相册选择图片和视频，支持多选图片
+- **预览缩略图**：图片和视频都显示真实预览缩略图
+- **自动播放**：按顺序自动播放图片和视频，支持循环播放
+- **播放控制**：播放/暂停、上一项/下一项、手动切换
+- **淡入淡出动画**：平滑的过渡动画效果
+- **全屏沉浸式播放**：隐藏状态栏和系统栏，提供沉浸式观看体验
+- **本地持久化**：所有项目数据保存在本地，无需网络连接
 
-A few resources to get you started if this is your first Flutter project:
+## 技术栈
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+- **框架**：Flutter (Dart)
+- **平台支持**：Android、iOS
+- **主要依赖**：
+  - `image_picker`：相册媒体选择
+  - `video_player`：视频播放
+  - `video_thumbnail`：视频缩略图生成
+  - `shared_preferences`：本地数据持久化
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## 开发环境要求
+
+- Flutter SDK 3.10.4 或更高版本
+- Android Studio / VS Code（推荐安装 Flutter 和 Dart 插件）
+- Android SDK（用于 Android 开发）
+- Xcode（用于 iOS 开发，仅 macOS）
+
+## 运行项目
+
+1. 克隆项目到本地
+2. 安装依赖：
+   ```bash
+   flutter pub get
+   ```
+3. 连接设备或启动模拟器
+4. 运行应用：
+   ```bash
+   flutter run
+   ```
+
+## 项目结构
+
+```
+lib/
+├── main.dart                 # 主入口和所有页面
+├── models/
+│   └── playlist_models.dart # 数据模型（Playlist, MediaItem, PlaylistSettings）
+├── services/
+│   └── playlist_repository.dart # 本地存储服务
+└── utils/
+    └── id_generator.dart    # ID 生成工具
+```
+
+## 使用说明
+
+1. **创建幻灯片项目**：在首页点击"新建幻灯片"按钮
+2. **添加媒体**：在编辑页点击"添加图片"或"添加视频"，从相册选择媒体
+3. **编辑项目**：点击首页的项目列表项进入编辑页，可以修改名称、添加/删除媒体
+4. **播放预览**：在编辑页点击"播放"按钮，进入全屏播放模式
+5. **播放控制**：在播放页点击屏幕显示/隐藏控制条，支持播放/暂停、上一项/下一项
+
+## 许可证
+
+本项目为个人项目，仅供学习和个人使用。

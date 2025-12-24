@@ -45,5 +45,10 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- 访问相册/媒体的用途说明（用于选择图片和视频制作幻灯片）。 -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>应用需要访问您的相册，用于选择图片和视频播放幻灯片。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>应用可以使用相机拍摄照片或视频添加到幻灯片（可选）。</string>
 </dict>
 </plist>

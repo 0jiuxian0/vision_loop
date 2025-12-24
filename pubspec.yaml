@@ -35,6 +35,18 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # Local key-value storage for persisting playlists as JSON.
+  shared_preferences: ^2.3.3
+
+  # Pick images/videos from gallery or camera.
+  image_picker: ^1.1.2
+
+  # Video playback for slideshow items.
+  video_player: ^2.9.2
+
+  # Generate video thumbnails for preview.
+  video_thumbnail: ^0.5.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
