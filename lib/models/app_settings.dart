@@ -48,6 +48,7 @@ class AppSettings {
     this.playbackMode = PlaybackMode.sequential,
     this.maxPlaybackDurationSeconds = -1, // -1 表示不限制
     this.playbackDurationUnit = PlaybackDurationUnit.seconds,
+    this.slideDurationUnit = PlaybackDurationUnit.seconds,
   });
 
   /// 播放模式：横屏或竖屏。
@@ -65,12 +66,16 @@ class AppSettings {
   /// 播放时长单位（用于设置页面显示和输入）。
   final PlaybackDurationUnit playbackDurationUnit;
 
+  /// 切换间隔单位（用于设置页面显示和输入）。
+  final PlaybackDurationUnit slideDurationUnit;
+
   AppSettings copyWith({
     PlaybackOrientation? playbackOrientation,
     int? slideDurationSeconds,
     PlaybackMode? playbackMode,
     int? maxPlaybackDurationSeconds,
     PlaybackDurationUnit? playbackDurationUnit,
+    PlaybackDurationUnit? slideDurationUnit,
   }) {
     return AppSettings(
       playbackOrientation: playbackOrientation ?? this.playbackOrientation,
@@ -78,6 +83,7 @@ class AppSettings {
       playbackMode: playbackMode ?? this.playbackMode,
       maxPlaybackDurationSeconds: maxPlaybackDurationSeconds ?? this.maxPlaybackDurationSeconds,
       playbackDurationUnit: playbackDurationUnit ?? this.playbackDurationUnit,
+      slideDurationUnit: slideDurationUnit ?? this.slideDurationUnit,
     );
   }
 
@@ -96,6 +102,7 @@ class AppSettings {
       'playbackMode': _playbackModeToString(playbackMode),
       'maxPlaybackDurationSeconds': maxPlaybackDurationSeconds,
       'playbackDurationUnit': _playbackDurationUnitToString(playbackDurationUnit),
+      'slideDurationUnit': _playbackDurationUnitToString(slideDurationUnit),
     };
   }
 
@@ -110,7 +117,10 @@ class AppSettings {
       ),
       maxPlaybackDurationSeconds: json['maxPlaybackDurationSeconds'] as int? ?? -1,
       playbackDurationUnit: _playbackDurationUnitFromString(
-        json['playbackDurationUnit'] as String? ?? 'hours',
+        json['playbackDurationUnit'] as String? ?? 'seconds',
+      ),
+      slideDurationUnit: _playbackDurationUnitFromString(
+        json['slideDurationUnit'] as String? ?? 'seconds',
       ),
     );
   }

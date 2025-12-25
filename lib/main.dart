@@ -3233,6 +3233,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final SettingsRepository _repository = const SettingsRepository();
   final TextEditingController _durationController = TextEditingController();
   final TextEditingController _playbackDurationController = TextEditingController();
+  final FocusNode _durationFocusNode = FocusNode();
 
   AppSettings? _settings;
   bool _isLoading = true;
@@ -3245,6 +3246,33 @@ class _SettingsPageState extends State<SettingsPage> {
     _durationController.addListener(_onDurationChanged);
     // 监听播放时长输入变化，实时保存
     _playbackDurationController.addListener(_onPlaybackDurationChanged);
+    // 监听切换间隔输入框焦点变化
+    _durationFocusNode.addListener(_onDurationFocusChanged);
+  }
+
+  void _onDurationFocusChanged() {
+    // 当输入框失去焦点且为空时，填充默认值3
+    if (!_durationFocusNode.hasFocus && _settings != null) {
+      final text = _durationController.text.trim();
+      if (text.isEmpty) {
+        final defaultSeconds = 3;
+        String displayValue;
+        switch (_settings!.slideDurationUnit) {
+          case PlaybackDurationUnit.hours:
+            displayValue = (defaultSeconds ~/ 3600).toString();
+            break;
+          case PlaybackDurationUnit.minutes:
+            displayValue = (defaultSeconds ~/ 60).toString();
+            break;
+          case PlaybackDurationUnit.seconds:
+            displayValue = defaultSeconds.toString();
+            break;
+        }
+        _durationController.text = displayValue;
+        // 保存设置
+        _autoSaveSettings();
+      }
+    }
   }
 
   void _onDurationChanged() {
@@ -3269,11 +3297,24 @@ class _SettingsPageState extends State<SettingsPage> {
     final settings = await _repository.load();
     setState(() {
       _settings = settings;
-      _durationController.text = settings.slideDurationSeconds.toString();
+      // 根据单位显示切换间隔值
+      _durationController.text = _getSlideDurationDisplayValue(settings);
       // 根据单位显示播放时长值
       _playbackDurationController.text = _getPlaybackDurationDisplayValue(settings);
       _isLoading = false;
     });
+  }
+
+  /// 根据单位获取切换间隔的显示值
+  String _getSlideDurationDisplayValue(AppSettings settings) {
+    switch (settings.slideDurationUnit) {
+      case PlaybackDurationUnit.hours:
+        return (settings.slideDurationSeconds ~/ 3600).toString();
+      case PlaybackDurationUnit.minutes:
+        return (settings.slideDurationSeconds ~/ 60).toString();
+      case PlaybackDurationUnit.seconds:
+        return settings.slideDurationSeconds.toString();
+    }
   }
 
   /// 根据单位获取播放时长的显示值
@@ -3314,8 +3355,18 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _autoSaveSettings() async {
     if (_settings == null) return;
 
+    // 计算切换间隔（总秒数）
     final durationText = _durationController.text.trim();
-    final duration = int.tryParse(durationText);
+    // 如果输入为空，使用默认值3秒
+    final finalDurationText = durationText.isEmpty ? '3' : durationText;
+    final slideDurationSeconds = _calculateTotalSeconds(
+      finalDurationText,
+      _settings!.slideDurationUnit,
+    );
+    // 如果计算结果是 -1（无效值），使用默认值3秒
+    final finalSlideDurationSeconds = (slideDurationSeconds != -1 && slideDurationSeconds >= 1) 
+        ? slideDurationSeconds 
+        : 3;
     
     // 计算播放时长限制（总秒数）
     final playbackDurationText = _playbackDurationController.text.trim();
@@ -3324,20 +3375,19 @@ class _SettingsPageState extends State<SettingsPage> {
       _settings!.playbackDurationUnit,
     );
     
-    // 如果 duration 无效，使用当前设置的值（不更新 duration）
-    // 这样即使 duration 输入框无效，也能保存播放方向和播放模式
     final updated = _settings!.copyWith(
-      slideDurationSeconds: (duration != null && duration >= 1) ? duration : _settings!.slideDurationSeconds,
+      slideDurationSeconds: finalSlideDurationSeconds,
       maxPlaybackDurationSeconds: maxPlaybackDurationSeconds,
     );
     await _repository.save(updated);
-    debugPrint('[SettingsPage] _autoSaveSettings: 自动保存完成 - orientation=${updated.playbackOrientation}, mode=${updated.playbackMode}, duration=${updated.slideDurationSeconds}, maxPlaybackDuration=${updated.maxPlaybackDurationSeconds}s');
+    debugPrint('[SettingsPage] _autoSaveSettings: 自动保存完成 - orientation=${updated.playbackOrientation}, mode=${updated.playbackMode}, slideDuration=${updated.slideDurationSeconds}s, maxPlaybackDuration=${updated.maxPlaybackDurationSeconds}s');
   }
 
   @override
   void dispose() {
     _durationController.dispose();
     _playbackDurationController.dispose();
+    _durationFocusNode.dispose();
     super.dispose();
   }
 
@@ -3489,16 +3539,77 @@ class _SettingsPageState extends State<SettingsPage> {
                               ),
                             ),
                             const SizedBox(height: 12),
-                            TextField(
-                              controller: _durationController,
-                              decoration: const InputDecoration(
-                                labelText: '图片切换间隔（秒）',
-                                hintText: '例如：3',
-                                border: OutlineInputBorder(),
-                                helperText: '设置图片自动切换的时间间隔，单位为秒',
-                              ),
-                              keyboardType: TextInputType.number,
-            ),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: TextField(
+                                    controller: _durationController,
+                                    decoration: const InputDecoration(
+                                      labelText: '切换间隔',
+                                      hintText: '例如：3',
+                                      border: OutlineInputBorder(),
+                                      helperText: '设置图片自动切换的时间间隔',
+                                    ),
+                                    keyboardType: TextInputType.number,
+                                    focusNode: _durationFocusNode,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  flex: 1,
+                                  child: DropdownButtonFormField<PlaybackDurationUnit>(
+                                    value: _settings!.slideDurationUnit,
+                                    decoration: const InputDecoration(
+                                      labelText: '单位',
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                                    ),
+                                    items: const [
+                                      DropdownMenuItem(
+                                        value: PlaybackDurationUnit.hours,
+                                        child: Text('小时'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: PlaybackDurationUnit.minutes,
+                                        child: Text('分钟'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: PlaybackDurationUnit.seconds,
+                                        child: Text('秒'),
+                                      ),
+                                    ],
+                                    onChanged: (value) {
+                                      if (value != null) {
+                                        // 先保存当前输入的值（转换为总秒数）
+                                        final currentText = _durationController.text.trim();
+                                        final totalSeconds = _calculateTotalSeconds(
+                                          currentText,
+                                          _settings!.slideDurationUnit,
+                                        );
+                                        // 如果计算结果是 -1（无效值），使用当前设置的值
+                                        final finalTotalSeconds = (totalSeconds != -1 && totalSeconds >= 1) 
+                                            ? totalSeconds 
+                                            : _settings!.slideDurationSeconds;
+                                        
+                                        setState(() {
+                                          // 更新单位
+                                          _settings = _settings!.copyWith(
+                                            slideDurationUnit: value,
+                                            slideDurationSeconds: finalTotalSeconds,
+                                          );
+                                          // 根据新单位更新显示值
+                                          _durationController.text = _getSlideDurationDisplayValue(_settings!);
+                                        });
+                                        // 实时保存
+                                        _autoSaveSettings();
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
           ],
         ),
       ),
