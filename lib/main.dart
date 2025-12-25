@@ -1261,6 +1261,8 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
 
     final startIndex = _items.length;
     final newItems = <MediaItem>[];
+    int skippedCount = 0;
+    
     for (var i = 0; i < files.length; i++) {
       final file = files[i];
       final originalPath = file.path;
@@ -1273,6 +1275,14 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
         // 使用文件管理器添加文件（去重）
         final managedPath = await _fileManager.addFile(originalPath);
         debugPrint('[EditPage] _addImages: 图片 $i 已添加到文件管理器 - managedPath=$managedPath, originalFileName=$originalFileName');
+        
+        // 检查当前幻灯片中是否已存在该文件
+        final alreadyExists = _items.any((item) => item.uri == managedPath);
+        if (alreadyExists) {
+          debugPrint('[EditPage] _addImages: 图片 $i 已存在于当前幻灯片中，跳过 - path=$managedPath');
+          skippedCount++;
+          continue;
+        }
         
         newItems.add(
           MediaItem(
@@ -1288,12 +1298,43 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
         continue;
       }
     }
+    
+    if (skippedCount > 0) {
+      debugPrint('[EditPage] _addImages: 跳过了 $skippedCount 个重复文件');
+    }
 
     debugPrint('[EditPage] _addImages: 添加了${newItems.length}个媒体项到列表');
+    
+    if (newItems.isEmpty) {
+      // 如果没有添加任何新项，显示提示信息
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(skippedCount > 0 
+              ? '所有图片都已存在于当前幻灯片中' 
+              : '未添加任何图片'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+    
     setState(() {
       _items.addAll(newItems);
       _playlist = _playlist?.copyWith(items: _items);
     });
+    
+    // 如果有跳过的文件，显示提示信息
+    if (skippedCount > 0 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已添加 ${newItems.length} 个图片，跳过了 $skippedCount 个重复文件'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+    
     // 实时保存
     _autoSave();
   }
@@ -1318,6 +1359,22 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
       // 使用文件管理器添加文件（去重）
       final managedPath = await _fileManager.addFile(originalPath);
       debugPrint('[EditPage] _addVideo: 视频已添加到文件管理器 - managedPath=$managedPath, originalFileName=$originalFileName');
+      
+      // 检查当前幻灯片中是否已存在该文件
+      final alreadyExists = _items.any((item) => item.uri == managedPath);
+      if (alreadyExists) {
+        debugPrint('[EditPage] _addVideo: 视频已存在于当前幻灯片中，跳过 - path=$managedPath');
+        // 显示提示信息
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('该视频已存在于当前幻灯片中'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
       
       final newItem = MediaItem(
         id: generateId('mi'),
