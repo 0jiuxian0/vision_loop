@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 
 import 'models/app_settings.dart' show AppSettings, PlaybackOrientation, PlaybackMode;
 import 'models/playlist_models.dart';
@@ -942,20 +943,39 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
     );
   }
 
-  /// 构建网格视图
+  /// 构建网格视图（支持拖拽排序）
   Widget _buildGridView() {
-    return GridView.builder(
+    return ReorderableGridView.count(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 80), // 底部 padding，为底部工具栏留出空间
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2, // 2列
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-        childAspectRatio: 0.75, // 宽高比，可以根据需要调整
-      ),
-      itemCount: _items.length,
-      itemBuilder: (context, index) {
-        final item = _items[index];
-        return _buildGridItem(item, index);
+      crossAxisCount: 2, // 2列
+      crossAxisSpacing: 8,
+      mainAxisSpacing: 8,
+      childAspectRatio: 0.75, // 宽高比，可以根据需要调整
+      children: [
+        for (var index = 0; index < _items.length; index++)
+          _buildGridItem(_items[index], index),
+      ],
+      onReorder: (oldIndex, newIndex) {
+        // 如果新位置在旧位置之后，需要调整索引（因为移除旧项后，后面的项会前移）
+        if (newIndex > oldIndex) {
+          newIndex -= 1;
+        }
+        
+        setState(() {
+          // 移动项目
+          final item = _items.removeAt(oldIndex);
+          _items.insert(newIndex, item);
+          
+          // 重新整理顺序索引
+          for (var i = 0; i < _items.length; i++) {
+            _items[i] = _items[i].copyWith(orderIndex: i);
+          }
+          _playlist = _playlist?.copyWith(items: _items);
+        });
+        
+        // 实时保存
+        _autoSave();
+        debugPrint('[EditPage] GridView onReorder: 从位置 $oldIndex 移动到 $newIndex');
       },
     );
   }
@@ -963,6 +983,7 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
   /// 构建网格项
   Widget _buildGridItem(MediaItem item, int index) {
     return Card(
+      key: ValueKey(item.id), // 使用 item.id 作为唯一 key，用于拖拽排序
       elevation: 2,
       child: Stack(
         children: [
