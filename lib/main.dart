@@ -390,6 +390,12 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
   }
 }
 
+/// 视图模式枚举
+enum ViewMode {
+  list,  // 列表视图
+  grid,  // 网格视图
+}
+
 /// 列表编辑页：编辑单个幻灯片项目的基础信息（暂时不含媒体选择）。
 class PlaylistEditPage extends StatefulWidget {
   const PlaylistEditPage({super.key});
@@ -408,6 +414,7 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
   Playlist? _playlist;
   List<MediaItem> _items = <MediaItem>[];
   bool _isLoading = true;
+  ViewMode _viewMode = ViewMode.grid; // 默认网格视图
 
   @override
   void initState() {
@@ -620,6 +627,240 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
           ],
         ),
       ),
+    );
+  }
+
+  /// 构建网格视图
+  Widget _buildGridView() {
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 80), // 底部 padding，为底部工具栏留出空间
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2, // 2列
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+        childAspectRatio: 0.75, // 宽高比，可以根据需要调整
+      ),
+      itemCount: _items.length,
+      itemBuilder: (context, index) {
+        final item = _items[index];
+        return _buildGridItem(item, index);
+      },
+    );
+  }
+
+  /// 构建网格项
+  Widget _buildGridItem(MediaItem item, int index) {
+    return Card(
+      elevation: 2,
+      child: Stack(
+        children: [
+          // 主要内容区域
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 预览图（占主要空间）
+              Expanded(
+                flex: 3,
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                  child: _buildMediaThumbnailForGrid(item),
+                ),
+              ),
+              // 底部信息区域
+              Expanded(
+                flex: 1,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+                      // 文件名（截断显示）
+            Text(
+                        _fileName(item.uri),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      // 类型标签
+                      Text(
+                        item.type == MediaType.image ? '图片' : '视频',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey[600],
+                        ),
+            ),
+          ],
+        ),
+      ),
+              ),
+            ],
+          ),
+          // 删除按钮（右上角）
+          Positioned(
+            top: 4,
+            right: 4,
+            child: Material(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => _removeItemById(item.id),
+                child: const Padding(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(
+                    Icons.close,
+                    size: 16,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 构建网格视图的缩略图（更大的尺寸）
+  Widget _buildMediaThumbnailForGrid(MediaItem item) {
+    if (item.type == MediaType.image) {
+      final file = File(item.uri);
+      return FutureBuilder<Uint8List?>(
+        future: _loadImageBytes(file),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Container(
+              color: Colors.grey.shade800,
+              child: const Center(
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              ),
+            );
+          }
+
+          if (snapshot.hasError) {
+            return Container(
+              color: Colors.grey.shade800,
+              child: const Icon(Icons.broken_image, color: Colors.white),
+            );
+          }
+
+          final bytes = snapshot.data;
+          if (bytes == null || bytes.isEmpty) {
+            return Container(
+              color: Colors.grey.shade800,
+              child: const Icon(Icons.broken_image, color: Colors.white),
+            );
+          }
+
+          return Image.memory(
+            bytes,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              // Flutter解码失败，尝试原生解码器
+              return FutureBuilder<Uint8List?>(
+                future: _decodeImageWithNativeForEdit(item.uri),
+                builder: (context, nativeSnapshot) {
+                  if (nativeSnapshot.connectionState == ConnectionState.waiting) {
+                    return Container(
+                      color: Colors.grey.shade800,
+                      child: const Center(
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      ),
+                    );
+                  }
+
+                  if (nativeSnapshot.hasData && nativeSnapshot.data != null) {
+                    return Image.memory(
+                      nativeSnapshot.data!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) {
+                        return Container(
+                          color: Colors.grey.shade800,
+                          child: const Icon(Icons.broken_image, color: Colors.white),
+                        );
+                      },
+                    );
+                  }
+
+                  return Container(
+                    color: Colors.grey.shade800,
+                    child: const Icon(Icons.broken_image, color: Colors.white),
+                  );
+                },
+              );
+            },
+          );
+        },
+      );
+    }
+
+    // 视频：生成真实缩略图
+    return FutureBuilder<String?>(
+      future: _generateVideoThumbnail(item.uri),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            color: Colors.grey.shade800,
+            child: const Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.hasData && snapshot.data != null) {
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.file(
+                File(snapshot.data!),
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) {
+                  return Container(
+                    color: Colors.grey.shade800,
+                    child: const Icon(Icons.videocam, color: Colors.white),
+                  );
+                },
+              ),
+              // 视频图标叠加层
+              Positioned(
+                bottom: 4,
+                right: 4,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Icon(
+                    Icons.play_circle_filled,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
+
+        return Container(
+          color: Colors.grey.shade800,
+          child: const Icon(Icons.videocam, color: Colors.white),
+        );
+      },
     );
   }
 
@@ -1008,6 +1249,18 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
               }
             },
           ),
+          actions: [
+            // 视图切换按钮
+            IconButton(
+              icon: Icon(_viewMode == ViewMode.list ? Icons.grid_view : Icons.view_list),
+              onPressed: () {
+                setState(() {
+                  _viewMode = _viewMode == ViewMode.list ? ViewMode.grid : ViewMode.list;
+                });
+              },
+              tooltip: _viewMode == ViewMode.list ? '切换到网格视图' : '切换到列表视图',
+            ),
+          ],
         ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -1030,35 +1283,37 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
                       ? const Center(
                           child: Text('还没有添加任何媒体，点击下方按钮从相册选择。'),
                         )
-                      : ReorderableListView(
-                          padding: const EdgeInsets.only(bottom: 80), // 底部 padding，为底部工具栏留出空间
-                          onReorder: (oldIndex, newIndex) {
-                            // 如果新位置在旧位置之后，需要调整索引（因为移除旧项后，后面的项会前移）
-                            if (newIndex > oldIndex) {
-                              newIndex -= 1;
-                            }
-                            
-                            setState(() {
-                              // 移动项目
-                              final item = _items.removeAt(oldIndex);
-                              _items.insert(newIndex, item);
-                              
-                              // 重新整理顺序索引
-                              for (var i = 0; i < _items.length; i++) {
-                                _items[i] = _items[i].copyWith(orderIndex: i);
-                              }
-                              _playlist = _playlist?.copyWith(items: _items);
-                            });
-                            
-                            // 实时保存
-                            _autoSave();
-                            debugPrint('[EditPage] onReorder: 从位置 $oldIndex 移动到 $newIndex');
-                          },
-                          children: [
-                            for (var index = 0; index < _items.length; index++)
-                              _buildReorderableItem(_items[index], index),
-                          ],
-                        ),
+                      : _viewMode == ViewMode.list
+                          ? ReorderableListView(
+                              padding: const EdgeInsets.only(bottom: 80), // 底部 padding，为底部工具栏留出空间
+                              onReorder: (oldIndex, newIndex) {
+                                // 如果新位置在旧位置之后，需要调整索引（因为移除旧项后，后面的项会前移）
+                                if (newIndex > oldIndex) {
+                                  newIndex -= 1;
+                                }
+                                
+                                setState(() {
+                                  // 移动项目
+                                  final item = _items.removeAt(oldIndex);
+                                  _items.insert(newIndex, item);
+                                  
+                                  // 重新整理顺序索引
+                                  for (var i = 0; i < _items.length; i++) {
+                                    _items[i] = _items[i].copyWith(orderIndex: i);
+                                  }
+                                  _playlist = _playlist?.copyWith(items: _items);
+                                });
+                                
+                                // 实时保存
+                                _autoSave();
+                                debugPrint('[EditPage] onReorder: 从位置 $oldIndex 移动到 $newIndex');
+                              },
+                              children: [
+                                for (var index = 0; index < _items.length; index++)
+                                  _buildReorderableItem(_items[index], index),
+                              ],
+                            )
+                          : _buildGridView(),
                 ),
               ],
             ),
