@@ -122,8 +122,8 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
       _isLoading = true;
     });
     final result = await _repository.loadAll();
-    // 按更新时间排序，最新的排前面
-    result.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    // 按 sortOrder 排序
+    result.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
     setState(() {
       _playlists = result;
       _isLoading = false;
@@ -139,6 +139,72 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
 
     // 无论返回什么值，都刷新列表（因为编辑页会实时保存，包括全面屏手势返回）
     await _loadPlaylists();
+  }
+
+  /// 构建可拖拽排序的播放列表项
+  Widget _buildReorderablePlaylistItem(Playlist playlist, int index) {
+    return Container(
+      key: ValueKey(playlist.id), // 使用 playlist.id 作为唯一 key
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.grey, width: 0.5),
+        ),
+      ),
+      child: ListTile(
+        title: Text(playlist.name),
+        subtitle: Text(
+          '共 ${playlist.items.length} 个媒体项',
+        ),
+        onTap: () => _openEditor(playlist: playlist),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 拖拽手柄图标
+            const Icon(Icons.drag_handle, color: Colors.grey),
+            const SizedBox(width: 8),
+            // 删除按钮
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              onPressed: () async {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (context) {
+                    return AlertDialog(
+                      title: const Text('删除幻灯片'),
+                      content: Text('确定要删除 "${playlist.name}" 吗？'),
+                      actions: [
+                        TextButton(
+                          onPressed: () =>
+                              Navigator.of(context).pop(false),
+                          child: const Text('取消'),
+                        ),
+                        TextButton(
+                          onPressed: () =>
+                              Navigator.of(context).pop(true),
+                          child: const Text('删除'),
+                        ),
+                      ],
+                    );
+                  },
+                );
+
+                if (confirm == true) {
+                  await _repository.deleteById(playlist.id);
+                  // 删除后需要重新分配 sortOrder
+                  final all = await _repository.loadAll();
+                  final updated = <Playlist>[];
+                  for (var i = 0; i < all.length; i++) {
+                    updated.add(all[i].copyWith(sortOrder: i));
+                  }
+                  await _repository.saveAll(updated);
+                  await _loadPlaylists();
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// 清空所有播放列表
@@ -190,51 +256,35 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
               ? const Center(
                   child: Text('暂无幻灯片项目，点击左下角按钮新建一个吧。'),
                 )
-              : ListView.separated(
-                  itemCount: _playlists.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+              : ReorderableListView(
                   padding: const EdgeInsets.only(bottom: 160), // 底部 padding，避免被2个悬浮按钮挡住
-                  itemBuilder: (context, index) {
-                    final playlist = _playlists[index];
-                    return ListTile(
-                      title: Text(playlist.name),
-                      subtitle: Text(
-                        '共 ${playlist.items.length} 个媒体项',
-                      ),
-                      onTap: () => _openEditor(playlist: playlist),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: () async {
-                          final confirm = await showDialog<bool>(
-                            context: context,
-                            builder: (context) {
-                              return AlertDialog(
-                                title: const Text('删除幻灯片'),
-                                content: Text('确定要删除 "${playlist.name}" 吗？'),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.of(context).pop(false),
-                                    child: const Text('取消'),
-                                  ),
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.of(context).pop(true),
-                                    child: const Text('删除'),
-                                  ),
-                                ],
-                              );
-                            },
-                          );
-
-                          if (confirm == true) {
-                            await _repository.deleteById(playlist.id);
-                            await _loadPlaylists();
-                          }
-                        },
-                      ),
-                    );
+                  onReorder: (oldIndex, newIndex) async {
+                    // 如果新位置在旧位置之后，需要调整索引（因为移除旧项后，后面的项会前移）
+                    if (newIndex > oldIndex) {
+                      newIndex -= 1;
+                    }
+                    
+                    // 移动项目
+                    final playlist = _playlists.removeAt(oldIndex);
+                    _playlists.insert(newIndex, playlist);
+                    
+                    // 重新分配 sortOrder（从 0 开始）
+                    final updatedPlaylists = <Playlist>[];
+                    for (var i = 0; i < _playlists.length; i++) {
+                      updatedPlaylists.add(_playlists[i].copyWith(sortOrder: i));
+                    }
+                    
+                    // 保存所有播放列表
+                    await _repository.saveAll(updatedPlaylists);
+                    
+                    // 刷新列表
+                    await _loadPlaylists();
+                    debugPrint('[PlaylistListPage] onReorder: 从位置 $oldIndex 移动到 $newIndex');
                   },
+                  children: [
+                    for (var index = 0; index < _playlists.length; index++)
+                      _buildReorderablePlaylistItem(_playlists[index], index),
+                  ],
                 ),
       floatingActionButton: Column(
         mainAxisAlignment: MainAxisAlignment.end,
@@ -296,12 +346,20 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
     if (playlistId == null) {
       // 新建项目。
       final now = DateTime.now();
+      // 获取所有播放列表，计算新的 sortOrder
+      final playlistRepo = const PlaylistRepository();
+      final allPlaylists = await playlistRepo.loadAll();
+      final maxSortOrder = allPlaylists.isEmpty 
+          ? -1 
+          : allPlaylists.map((p) => p.sortOrder).reduce((a, b) => a > b ? a : b);
+      
       final playlist = Playlist(
         id: generateId('pl'),
         name: '',
         createdAt: now,
         updatedAt: now,
         items: <MediaItem>[],
+        sortOrder: maxSortOrder + 1, // 新项放在最后
       );
     setState(() {
       _playlist = playlist;

@@ -137,6 +137,7 @@ class Playlist {
     required this.updatedAt,
     required this.items,
     this.settings = const PlaylistSettings(),
+    this.sortOrder = 0,
   });
 
   final String id;
@@ -145,6 +146,7 @@ class Playlist {
   final DateTime updatedAt;
   final PlaylistSettings settings;
   final List<MediaItem> items;
+  final int sortOrder; // 手动排序顺序
 
   Playlist copyWith({
     String? id,
@@ -153,6 +155,7 @@ class Playlist {
     DateTime? updatedAt,
     PlaylistSettings? settings,
     List<MediaItem>? items,
+    int? sortOrder,
   }) {
     return Playlist(
       id: id ?? this.id,
@@ -161,6 +164,7 @@ class Playlist {
       updatedAt: updatedAt ?? this.updatedAt,
       settings: settings ?? this.settings,
       items: items ?? this.items,
+      sortOrder: sortOrder ?? this.sortOrder,
     );
   }
 
@@ -172,6 +176,7 @@ class Playlist {
       'updatedAt': updatedAt.toIso8601String(),
       'settings': settings.toJson(),
       'items': items.map((e) => e.toJson()).toList(),
+      'sortOrder': sortOrder,
     };
   }
 
@@ -189,6 +194,7 @@ class Playlist {
             (e) => MediaItem.fromJson(e as Map<String, dynamic>),
           )
           .toList(),
+      sortOrder: (json['sortOrder'] as num?)?.toInt() ?? 0,
     );
   }
 
