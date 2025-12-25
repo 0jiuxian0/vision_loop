@@ -446,6 +446,46 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
     _autoSave();
   }
 
+  /// 通过 ID 删除媒体项
+  void _removeItemById(String itemId) {
+    final index = _items.indexWhere((item) => item.id == itemId);
+    if (index != -1) {
+      _removeItem(index);
+    }
+  }
+
+  /// 构建可拖拽排序的列表项
+  Widget _buildReorderableItem(MediaItem item, int index) {
+    return Container(
+      key: ValueKey(item.id), // 使用 item.id 作为唯一 key
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.grey, width: 0.5),
+        ),
+      ),
+      child: ListTile(
+        leading: _buildMediaThumbnail(item),
+        title: Text(_fileName(item.uri)),
+        subtitle: Text(
+          item.type == MediaType.image ? '图片' : '视频',
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 拖拽手柄图标
+            const Icon(Icons.drag_handle, color: Colors.grey),
+            const SizedBox(width: 8),
+            // 删除按钮
+            IconButton(
+              icon: const Icon(Icons.delete),
+              onPressed: () => _removeItemById(item.id),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// 清空所有媒体项
   Future<void> _clearAllItems() async {
     if (_items.isEmpty) {
@@ -853,25 +893,34 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
                       ? const Center(
                           child: Text('还没有添加任何媒体，点击下方按钮从相册选择。'),
                         )
-                      : ListView.separated(
-                          itemCount: _items.length,
-                          separatorBuilder: (_, __) =>
-                              const Divider(height: 1),
+                      : ReorderableListView(
                           padding: const EdgeInsets.only(bottom: 280), // 底部 padding，避免被4个悬浮按钮挡住（每个按钮高度约56，加上间距）
-                          itemBuilder: (context, index) {
-                            final item = _items[index];
-                            return ListTile(
-                              leading: _buildMediaThumbnail(item),
-                              title: Text(_fileName(item.uri)),
-                              subtitle: Text(
-                                item.type == MediaType.image ? '图片' : '视频',
-                              ),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete),
-                                onPressed: () => _removeItem(index),
-                              ),
-                            );
+                          onReorder: (oldIndex, newIndex) {
+                            // 如果新位置在旧位置之后，需要调整索引（因为移除旧项后，后面的项会前移）
+                            if (newIndex > oldIndex) {
+                              newIndex -= 1;
+                            }
+                            
+                            setState(() {
+                              // 移动项目
+                              final item = _items.removeAt(oldIndex);
+                              _items.insert(newIndex, item);
+                              
+                              // 重新整理顺序索引
+                              for (var i = 0; i < _items.length; i++) {
+                                _items[i] = _items[i].copyWith(orderIndex: i);
+                              }
+                              _playlist = _playlist?.copyWith(items: _items);
+                            });
+                            
+                            // 实时保存
+                            _autoSave();
+                            debugPrint('[EditPage] onReorder: 从位置 $oldIndex 移动到 $newIndex');
                           },
+                          children: [
+                            for (var index = 0; index < _items.length; index++)
+                              _buildReorderableItem(_items[index], index),
+                          ],
                         ),
                 ),
               ],
