@@ -141,6 +141,43 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
     await _loadPlaylists();
   }
 
+  /// 清空所有播放列表
+  Future<void> _clearAllPlaylists() async {
+    if (_playlists.isEmpty) {
+      // 如果列表已经为空，不需要显示确认对话框
+      return;
+    }
+
+    // 显示确认对话框
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认清空'),
+        content: Text('确定要清空所有 ${_playlists.length} 个播放列表吗？此操作不可恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('清空', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      // 删除所有播放列表
+      for (final playlist in _playlists) {
+        await _repository.deleteById(playlist.id);
+      }
+      // 刷新列表
+      await _loadPlaylists();
+      debugPrint('[PlaylistListPage] _clearAllPlaylists: 已清空所有播放列表');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -156,7 +193,7 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
               : ListView.separated(
                   itemCount: _playlists.length,
                   separatorBuilder: (_, __) => const Divider(height: 1),
-                  padding: const EdgeInsets.only(bottom: 80), // 底部 padding，避免被悬浮按钮挡住
+                  padding: const EdgeInsets.only(bottom: 160), // 底部 padding，避免被2个悬浮按钮挡住
                   itemBuilder: (context, index) {
                     final playlist = _playlists[index];
                     return ListTile(
@@ -199,10 +236,25 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
                     );
                   },
                 ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openEditor(),
-        icon: const Icon(Icons.add),
-        label: const Text('新建幻灯片'),
+      floatingActionButton: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'new',
+            onPressed: () => _openEditor(),
+            icon: const Icon(Icons.add),
+            label: const Text('新建幻灯片'),
+          ),
+          const SizedBox(height: 16),
+          FloatingActionButton(
+            heroTag: 'clear',
+            onPressed: _playlists.isEmpty ? null : _clearAllPlaylists,
+            backgroundColor: Colors.red,
+            child: const Icon(Icons.delete_sweep),
+            tooltip: '清空全部',
+          ),
+        ],
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
     );
