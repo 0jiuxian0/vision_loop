@@ -13,12 +13,22 @@ import 'models/app_settings.dart' show AppSettings, PlaybackOrientation, Playbac
 import 'models/playlist_models.dart';
 import 'services/playlist_repository.dart';
 import 'services/settings_repository.dart';
+import 'services/media_file_manager.dart';
 import 'utils/id_generator.dart';
 
 // Platform Channel 用于调用原生图片解码器
 const MethodChannel _imageDecoderChannel = MethodChannel('com.example.vision_loop/image_decoder');
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // 初始化文件管理器（在后台进行，不阻塞 UI）
+  // initialize() 内部已经会清理孤立文件，所以不需要重复调用
+  MediaFileManager().initialize().catchError((error) {
+    debugPrint('[main] 文件管理器初始化失败: $error');
+    // 即使初始化失败，也继续启动应用
+  });
+  
   runApp(const VisionLoopApp());
 }
 
@@ -168,6 +178,7 @@ class PlaylistListPage extends StatefulWidget {
 
 class _PlaylistListPageState extends State<PlaylistListPage> {
   final PlaylistRepository _repository = const PlaylistRepository();
+  final MediaFileManager _fileManager = MediaFileManager();
 
   bool _isLoading = true;
   List<Playlist> _playlists = <Playlist>[];
@@ -291,7 +302,20 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
                 );
 
                 if (confirm == true) {
+                  // 获取播放列表中所有媒体文件的路径
+                  final filePaths = playlist.items.map((item) => item.uri).toList();
+                  
+                  // 删除播放列表
                   await _repository.deleteById(playlist.id);
+                  
+                  // 减少所有文件的引用计数
+                  try {
+                    await _fileManager.decrementRefCounts(filePaths);
+                    debugPrint('[PlaylistListPage] 已减少播放列表文件的引用计数 - playlistId=${playlist.id}');
+                  } catch (e) {
+                    debugPrint('[PlaylistListPage] 减少引用计数失败 - playlistId=${playlist.id}, error=$e');
+                  }
+                  
                   // 删除后需要重新分配 sortOrder
                   final all = await _repository.loadAll();
                   final updated = <Playlist>[];
@@ -337,10 +361,25 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
     );
 
     if (confirmed == true) {
+      // 收集所有播放列表中的文件路径
+      final allFilePaths = <String>[];
+      for (final playlist in _playlists) {
+        allFilePaths.addAll(playlist.items.map((item) => item.uri));
+      }
+      
       // 删除所有播放列表
       for (final playlist in _playlists) {
         await _repository.deleteById(playlist.id);
       }
+      
+      // 减少所有文件的引用计数
+      try {
+        await _fileManager.decrementRefCounts(allFilePaths);
+        debugPrint('[PlaylistListPage] _clearAllPlaylists: 已减少所有文件的引用计数');
+      } catch (e) {
+        debugPrint('[PlaylistListPage] _clearAllPlaylists: 减少引用计数失败 - error=$e');
+      }
+      
       // 刷新列表（会自动更新 _playlistCountNotifier）
       await _loadPlaylists();
       debugPrint('[PlaylistListPage] _clearAllPlaylists: 已清空所有播放列表');
@@ -536,7 +575,20 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
                             );
 
                             if (confirm == true) {
+                              // 获取播放列表中所有媒体文件的路径
+                              final filePaths = playlist.items.map((item) => item.uri).toList();
+                              
+                              // 删除播放列表
                               await _repository.deleteById(playlist.id);
+                              
+                              // 减少所有文件的引用计数
+                              try {
+                                await _fileManager.decrementRefCounts(filePaths);
+                                debugPrint('[PlaylistListPage] 已减少播放列表文件的引用计数 - playlistId=${playlist.id}');
+                              } catch (e) {
+                                debugPrint('[PlaylistListPage] 减少引用计数失败 - playlistId=${playlist.id}, error=$e');
+                              }
+                              
                               // 删除后需要重新分配 sortOrder
                               final all = await _repository.loadAll();
                               final updated = <Playlist>[];
@@ -1117,6 +1169,7 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
   final PlaylistRepository _repository = const PlaylistRepository();
   final TextEditingController _nameController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
+  final MediaFileManager _fileManager = MediaFileManager();
 
   Playlist? _playlist;
   List<MediaItem> _items = <MediaItem>[];
@@ -1210,29 +1263,26 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
     final newItems = <MediaItem>[];
     for (var i = 0; i < files.length; i++) {
       final file = files[i];
-      final filePath = file.path;
-      debugPrint('[EditPage] _addImages: 处理图片 $i - path=$filePath');
+      final originalPath = file.path;
+      debugPrint('[EditPage] _addImages: 处理图片 $i - path=$originalPath');
       
-      // 检查文件是否存在
-      final fileObj = File(filePath);
-      final fileExists = await fileObj.exists();
-      final fileSize = fileExists ? await fileObj.length() : 0;
-      debugPrint('[EditPage] _addImages: 图片 $i 文件检查 - exists=$fileExists, size=$fileSize bytes');
-      
-      if (!fileExists) {
-        debugPrint('[EditPage] _addImages: 图片 $i 文件不存在，跳过');
+      try {
+        // 使用文件管理器添加文件（去重）
+        final managedPath = await _fileManager.addFile(originalPath);
+        debugPrint('[EditPage] _addImages: 图片 $i 已添加到文件管理器 - managedPath=$managedPath');
+        
+        newItems.add(
+          MediaItem(
+            id: generateId('mi'),
+            type: MediaType.image,
+            uri: managedPath,
+            orderIndex: startIndex + newItems.length,
+          ),
+        );
+      } catch (e) {
+        debugPrint('[EditPage] _addImages: 图片 $i 处理失败 - error=$e');
         continue;
       }
-
-      // 直接使用原始路径，不复制
-      newItems.add(
-        MediaItem(
-          id: generateId('mi'),
-          type: MediaType.image,
-          uri: filePath,
-          orderIndex: startIndex + newItems.length,
-        ),
-      );
     }
 
     debugPrint('[EditPage] _addImages: 添加了${newItems.length}个媒体项到列表');
@@ -1254,37 +1304,37 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
       return;
     }
 
-    final filePath = file.path;
-    debugPrint('[EditPage] _addVideo: 处理视频 - path=$filePath');
+    final originalPath = file.path;
+    debugPrint('[EditPage] _addVideo: 处理视频 - path=$originalPath');
     
-    // 检查文件是否存在
-    final fileObj = File(filePath);
-    final fileExists = await fileObj.exists();
-    final fileSize = fileExists ? await fileObj.length() : 0;
-    debugPrint('[EditPage] _addVideo: 视频文件检查 - exists=$fileExists, size=$fileSize bytes');
-    
-    if (!fileExists) {
-      debugPrint('[EditPage] _addVideo: 文件不存在，退出');
-      return;
+    try {
+      // 使用文件管理器添加文件（去重）
+      final managedPath = await _fileManager.addFile(originalPath);
+      debugPrint('[EditPage] _addVideo: 视频已添加到文件管理器 - managedPath=$managedPath');
+      
+      final newItem = MediaItem(
+        id: generateId('mi'),
+        type: MediaType.video,
+        uri: managedPath,
+        orderIndex: _items.length,
+      );
+
+      setState(() {
+        _items.add(newItem);
+        _playlist = _playlist?.copyWith(items: _items);
+      });
+      // 实时保存
+      _autoSave();
+    } catch (e) {
+      debugPrint('[EditPage] _addVideo: 视频处理失败 - error=$e');
     }
-
-    // 直接使用原始路径，不复制
-    final newItem = MediaItem(
-      id: generateId('mi'),
-      type: MediaType.video,
-      uri: filePath,
-      orderIndex: _items.length,
-    );
-
-    setState(() {
-      _items.add(newItem);
-      _playlist = _playlist?.copyWith(items: _items);
-    });
-    // 实时保存
-    _autoSave();
   }
 
-  void _removeItem(int index) {
+  void _removeItem(int index) async {
+    // 获取要删除的文件路径
+    final removedItem = _items[index];
+    final filePath = removedItem.uri;
+    
     setState(() {
       _items.removeAt(index);
       // 重新整理顺序索引。
@@ -1293,6 +1343,15 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
       }
       _playlist = _playlist?.copyWith(items: _items);
     });
+    
+    // 减少文件引用计数
+    try {
+      await _fileManager.decrementRefCount(filePath);
+      debugPrint('[EditPage] _removeItem: 已减少文件引用计数 - path=$filePath');
+    } catch (e) {
+      debugPrint('[EditPage] _removeItem: 减少引用计数失败 - path=$filePath, error=$e');
+    }
+    
     // 实时保存
     _autoSave();
   }
@@ -1623,10 +1682,22 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
     );
 
     if (confirmed == true) {
+      // 获取所有要删除的文件路径
+      final filePaths = _items.map((item) => item.uri).toList();
+      
       setState(() {
         _items.clear();
         _playlist = _playlist?.copyWith(items: _items);
       });
+      
+      // 减少所有文件的引用计数
+      try {
+        await _fileManager.decrementRefCounts(filePaths);
+        debugPrint('[EditPage] _clearAllItems: 已减少所有文件的引用计数');
+      } catch (e) {
+        debugPrint('[EditPage] _clearAllItems: 减少引用计数失败 - error=$e');
+      }
+      
       // 实时保存
       _autoSave();
       debugPrint('[EditPage] _clearAllItems: 已清空所有媒体项');
