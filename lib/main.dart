@@ -60,11 +60,18 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   int _currentIndex = 0;
+  final GlobalKey<_PlaylistListPageState> _playlistListPageKey = GlobalKey<_PlaylistListPageState>();
 
-  final List<Widget> _pages = [
-    const PlaylistListPage(),
-    const SettingsPage(),
-  ];
+  late final List<Widget> _pages;
+
+  @override
+  void initState() {
+    super.initState();
+    _pages = [
+      PlaylistListPage(key: _playlistListPageKey),
+      const SettingsPage(),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -73,6 +80,59 @@ class _MainPageState extends State<MainPage> {
         index: _currentIndex,
         children: _pages,
       ),
+      persistentFooterButtons: _currentIndex == 0
+          ? [
+              // 新建幻灯片按钮
+              ElevatedButton.icon(
+                onPressed: () {
+                  _playlistListPageKey.currentState?.openEditor();
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('新建幻灯片'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                ),
+              ),
+              // 清空全部按钮（使用 ValueListenableBuilder 动态更新状态）
+              Builder(
+                builder: (context) {
+                  final state = _playlistListPageKey.currentState;
+                  if (state == null) {
+                    // 如果状态还未初始化，显示禁用按钮
+                    return ElevatedButton.icon(
+                      onPressed: null,
+                      icon: const Icon(Icons.delete_sweep),
+                      label: const Text('清空全部'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    );
+                  }
+                  return ValueListenableBuilder<int>(
+                    valueListenable: state.playlistCountNotifier,
+                    builder: (context, count, child) {
+                      return ElevatedButton.icon(
+                        onPressed: count == 0
+                            ? null
+                            : () {
+                                state.clearAllPlaylists();
+                              },
+                        icon: const Icon(Icons.delete_sweep),
+                        label: const Text('清空全部'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ]
+          : null,
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) {
@@ -110,11 +170,18 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
 
   bool _isLoading = true;
   List<Playlist> _playlists = <Playlist>[];
+  final ValueNotifier<int> _playlistCountNotifier = ValueNotifier<int>(0);
 
   @override
   void initState() {
     super.initState();
     _loadPlaylists();
+  }
+
+  @override
+  void dispose() {
+    _playlistCountNotifier.dispose();
+    super.dispose();
   }
 
   Future<void> _loadPlaylists() async {
@@ -128,6 +195,8 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
       _playlists = result;
       _isLoading = false;
     });
+    // 通知列表数量变化
+    _playlistCountNotifier.value = _playlists.length;
   }
 
   Future<void> _openEditor({Playlist? playlist}) async {
@@ -140,6 +209,22 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
     // 无论返回什么值，都刷新列表（因为编辑页会实时保存，包括全面屏手势返回）
     await _loadPlaylists();
   }
+
+  /// 公开方法：打开编辑器（供 MainPage 调用）
+  void openEditor() {
+    _openEditor();
+  }
+
+  /// 公开方法：清空所有播放列表（供 MainPage 调用）
+  void clearAllPlaylists() {
+    _clearAllPlaylists();
+  }
+
+  /// 公开 getter：获取播放列表（供 MainPage 调用）
+  List<Playlist> get playlists => _playlists;
+
+  /// 公开 getter：获取播放列表数量通知器（供 MainPage 调用）
+  ValueNotifier<int> get playlistCountNotifier => _playlistCountNotifier;
 
   /// 构建可拖拽排序的播放列表项
   Widget _buildReorderablePlaylistItem(Playlist playlist, int index) {
@@ -211,6 +296,7 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
                     updated.add(all[i].copyWith(sortOrder: i));
                   }
                   await _repository.saveAll(updated);
+                  // 刷新列表（会自动更新 _playlistCountNotifier）
                   await _loadPlaylists();
                 }
               },
@@ -252,7 +338,7 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
       for (final playlist in _playlists) {
         await _repository.deleteById(playlist.id);
       }
-      // 刷新列表
+      // 刷新列表（会自动更新 _playlistCountNotifier）
       await _loadPlaylists();
       debugPrint('[PlaylistListPage] _clearAllPlaylists: 已清空所有播放列表');
     }
@@ -271,7 +357,7 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
                   child: Text('暂无幻灯片项目，点击左下角按钮新建一个吧。'),
                 )
               : ReorderableListView(
-                  padding: const EdgeInsets.only(bottom: 160), // 底部 padding，避免被2个悬浮按钮挡住
+                  padding: const EdgeInsets.only(bottom: 80), // 底部 padding，为底部工具栏留出空间
                   onReorder: (oldIndex, newIndex) async {
                     // 如果新位置在旧位置之后，需要调整索引（因为移除旧项后，后面的项会前移）
                     if (newIndex > oldIndex) {
@@ -300,27 +386,6 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
                       _buildReorderablePlaylistItem(_playlists[index], index),
                   ],
                 ),
-      floatingActionButton: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          FloatingActionButton.extended(
-            heroTag: 'new',
-            onPressed: () => _openEditor(),
-            icon: const Icon(Icons.add),
-            label: const Text('新建幻灯片'),
-          ),
-          const SizedBox(height: 16),
-          FloatingActionButton(
-            heroTag: 'clear',
-            onPressed: _playlists.isEmpty ? null : _clearAllPlaylists,
-            backgroundColor: Colors.red,
-            child: const Icon(Icons.delete_sweep),
-            tooltip: '清空全部',
-          ),
-        ],
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
     );
   }
 }
@@ -966,7 +1031,7 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
                           child: Text('还没有添加任何媒体，点击下方按钮从相册选择。'),
                         )
                       : ReorderableListView(
-                          padding: const EdgeInsets.only(bottom: 280), // 底部 padding，避免被4个悬浮按钮挡住（每个按钮高度约56，加上间距）
+                          padding: const EdgeInsets.only(bottom: 80), // 底部 padding，为底部工具栏留出空间
                           onReorder: (oldIndex, newIndex) {
                             // 如果新位置在旧位置之后，需要调整索引（因为移除旧项后，后面的项会前移）
                             if (newIndex > oldIndex) {
@@ -997,48 +1062,45 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
                 ),
               ],
             ),
-      floatingActionButton: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          FloatingActionButton(
-            heroTag: 'play',
-            onPressed: _isLoading || _playlist == null
-                ? null
-                : () {
-                    Navigator.of(context).pushNamed(
-                      PlayerPage.routeName,
-                      arguments: _playlist!.id,
-                    );
-                  },
-            child: const Icon(Icons.play_arrow),
-            tooltip: '播放',
-          ),
-          const SizedBox(height: 16),
-          FloatingActionButton(
-            heroTag: 'video',
-            onPressed: _addVideo,
-            child: const Icon(Icons.videocam),
-            tooltip: '添加视频',
-          ),
-          const SizedBox(height: 16),
-          FloatingActionButton(
-            heroTag: 'image',
-            onPressed: _addImages,
-            child: const Icon(Icons.photo),
-            tooltip: '添加图片',
-          ),
-          const SizedBox(height: 16),
-          FloatingActionButton(
-            heroTag: 'clear',
-            onPressed: _items.isEmpty ? null : _clearAllItems,
-            backgroundColor: Colors.red,
-            child: const Icon(Icons.delete_sweep),
-            tooltip: '清空全部',
-          ),
-        ],
+      bottomNavigationBar: BottomAppBar(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            // 播放按钮
+            IconButton(
+              icon: const Icon(Icons.play_arrow),
+              onPressed: _isLoading || _playlist == null || _items.isEmpty
+                  ? null
+                  : () {
+                      Navigator.of(context).pushNamed(
+                        PlayerPage.routeName,
+                        arguments: _playlist!.id,
+                      );
+                    },
+              tooltip: '播放',
+            ),
+            // 添加图片按钮
+            IconButton(
+              icon: const Icon(Icons.photo),
+              onPressed: _addImages,
+              tooltip: '添加图片',
+            ),
+            // 添加视频按钮
+            IconButton(
+              icon: const Icon(Icons.videocam),
+              onPressed: _addVideo,
+              tooltip: '添加视频',
+            ),
+            // 清空全部按钮
+            IconButton(
+              icon: const Icon(Icons.delete_sweep),
+              onPressed: _items.isEmpty ? null : _clearAllItems,
+              color: Colors.red,
+              tooltip: '清空全部',
+            ),
+          ],
+        ),
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
       ),
     );
   }
