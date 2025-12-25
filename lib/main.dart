@@ -159,6 +159,20 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // 播放按钮
+            IconButton(
+              icon: const Icon(Icons.play_arrow),
+              onPressed: playlist.items.isEmpty
+                  ? null
+                  : () {
+                      Navigator.of(context).pushNamed(
+                        PlayerPage.routeName,
+                        arguments: playlist.id,
+                      );
+                    },
+              tooltip: '播放',
+            ),
+            const SizedBox(width: 4),
             // 拖拽手柄图标
             const Icon(Icons.drag_handle, color: Colors.grey),
             const SizedBox(width: 8),
