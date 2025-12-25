@@ -236,6 +236,7 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
         ),
       ),
       child: ListTile(
+        leading: _buildPlaylistThumbnail(playlist),
         title: Text(playlist.name),
         subtitle: Text(
           '共 ${playlist.items.length} 个媒体项',
@@ -387,6 +388,317 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
                   ],
                 ),
     );
+  }
+
+  /// 构建播放列表的预览图（使用第一个媒体项）
+  Widget _buildPlaylistThumbnail(Playlist playlist) {
+    // 如果没有媒体项，显示默认图标
+    if (playlist.items.isEmpty) {
+      return Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          color: Colors.grey.shade300,
+        ),
+        child: const Icon(Icons.image, color: Colors.grey),
+      );
+    }
+
+    // 获取第一个媒体项
+    final firstItem = playlist.items.first;
+    
+    if (firstItem.type == MediaType.image) {
+      return _buildImageThumbnail(firstItem.uri);
+    } else {
+      return _buildVideoThumbnail(firstItem.uri);
+    }
+  }
+
+  /// 构建图片缩略图
+  Widget _buildImageThumbnail(String imagePath) {
+    final file = File(imagePath);
+    return FutureBuilder<Uint8List?>(
+      future: _loadImageBytesForList(file),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: Colors.grey.shade800,
+            ),
+            child: const Center(
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.hasError || snapshot.data == null || snapshot.data!.isEmpty) {
+          // 尝试使用原生解码器
+          return FutureBuilder<Uint8List?>(
+            future: _decodeImageWithNativeForList(imagePath),
+            builder: (context, nativeSnapshot) {
+              if (nativeSnapshot.connectionState == ConnectionState.waiting) {
+                return Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: Colors.grey.shade800,
+                  ),
+                  child: const Center(
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                );
+              }
+
+              if (nativeSnapshot.hasData && nativeSnapshot.data != null) {
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    nativeSnapshot.data!,
+                    width: 56,
+                    height: 56,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) {
+                      return Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          color: Colors.grey.shade300,
+                        ),
+                        child: const Icon(Icons.broken_image, color: Colors.grey),
+                      );
+                    },
+                  ),
+                );
+              }
+
+              return Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.grey.shade300,
+                ),
+                child: const Icon(Icons.broken_image, color: Colors.grey),
+              );
+            },
+          );
+        }
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.memory(
+            snapshot.data!,
+            width: 56,
+            height: 56,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              // Flutter解码失败，尝试原生解码器
+              return FutureBuilder<Uint8List?>(
+                future: _decodeImageWithNativeForList(imagePath),
+                builder: (context, nativeSnapshot) {
+                  if (nativeSnapshot.connectionState == ConnectionState.waiting) {
+                    return Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: Colors.grey.shade800,
+                      ),
+                      child: const Center(
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  if (nativeSnapshot.hasData && nativeSnapshot.data != null) {
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(
+                        nativeSnapshot.data!,
+                        width: 56,
+                        height: 56,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) {
+                          return Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              color: Colors.grey.shade300,
+                            ),
+                            child: const Icon(Icons.broken_image, color: Colors.grey),
+                          );
+                        },
+                      ),
+                    );
+                  }
+
+                  return Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      color: Colors.grey.shade300,
+                    ),
+                    child: const Icon(Icons.broken_image, color: Colors.grey),
+                  );
+                },
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  /// 构建视频缩略图
+  Widget _buildVideoThumbnail(String videoPath) {
+    return FutureBuilder<String?>(
+      future: _generateVideoThumbnailForList(videoPath),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: Colors.grey.shade800,
+            ),
+            child: const Center(
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.hasData && snapshot.data != null) {
+          return Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.file(
+                  File(snapshot.data!),
+                  width: 56,
+                  height: 56,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) {
+                    return Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: Colors.grey.shade800,
+                      ),
+                      child: const Icon(Icons.videocam, color: Colors.white),
+                    );
+                  },
+                ),
+              ),
+              // 视频图标叠加层
+              Positioned(
+                bottom: 2,
+                right: 2,
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Icon(
+                    Icons.play_circle_filled,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
+
+        return Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            color: Colors.grey.shade800,
+          ),
+          child: const Icon(Icons.videocam, color: Colors.white),
+        );
+      },
+    );
+  }
+
+  /// 读取图片文件的字节数据（列表页使用）
+  Future<Uint8List?> _loadImageBytesForList(File file) async {
+    try {
+      if (!await file.exists()) {
+        return null;
+      }
+      return await file.readAsBytes();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// 使用原生解码器解码图片（列表页使用）
+  Future<Uint8List?> _decodeImageWithNativeForList(String imagePath) async {
+    try {
+      final result = await _imageDecoderChannel.invokeMethod<Uint8List>('decodeImage', {
+        'path': imagePath,
+      });
+      return result;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// 生成视频缩略图（列表页使用）
+  Future<String?> _generateVideoThumbnailForList(String videoPath) async {
+    try {
+      final thumbnail = await VideoThumbnail.thumbnailFile(
+        video: videoPath,
+        thumbnailPath: (await Directory.systemTemp).path,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 200,
+        quality: 75,
+      );
+      return thumbnail;
+    } catch (e) {
+      return null;
+    }
   }
 }
 
