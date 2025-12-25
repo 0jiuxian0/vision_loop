@@ -33,12 +33,21 @@ String playbackOrientationToString(PlaybackOrientation orientation) {
   }
 }
 
+/// 播放时长单位。
+enum PlaybackDurationUnit {
+  hours,   // 小时
+  minutes, // 分钟
+  seconds, // 秒
+}
+
 /// 全局应用设置。
 class AppSettings {
   AppSettings({
     this.playbackOrientation = PlaybackOrientation.landscape,
     this.slideDurationSeconds = 3,
     this.playbackMode = PlaybackMode.sequential,
+    this.maxPlaybackDurationSeconds = -1, // -1 表示不限制
+    this.playbackDurationUnit = PlaybackDurationUnit.seconds,
   });
 
   /// 播放模式：横屏或竖屏。
@@ -50,16 +59,34 @@ class AppSettings {
   /// 播放顺序模式。
   final PlaybackMode playbackMode;
 
+  /// 最大播放时长（秒）。-1 表示不限制。
+  final int maxPlaybackDurationSeconds;
+
+  /// 播放时长单位（用于设置页面显示和输入）。
+  final PlaybackDurationUnit playbackDurationUnit;
+
   AppSettings copyWith({
     PlaybackOrientation? playbackOrientation,
     int? slideDurationSeconds,
     PlaybackMode? playbackMode,
+    int? maxPlaybackDurationSeconds,
+    PlaybackDurationUnit? playbackDurationUnit,
   }) {
     return AppSettings(
       playbackOrientation: playbackOrientation ?? this.playbackOrientation,
       slideDurationSeconds: slideDurationSeconds ?? this.slideDurationSeconds,
       playbackMode: playbackMode ?? this.playbackMode,
+      maxPlaybackDurationSeconds: maxPlaybackDurationSeconds ?? this.maxPlaybackDurationSeconds,
+      playbackDurationUnit: playbackDurationUnit ?? this.playbackDurationUnit,
     );
+  }
+
+  /// 获取播放时长限制的 Duration 对象。如果为 -1，返回 null。
+  Duration? get maxPlaybackDuration {
+    if (maxPlaybackDurationSeconds == -1) {
+      return null;
+    }
+    return Duration(seconds: maxPlaybackDurationSeconds);
   }
 
   Map<String, dynamic> toJson() {
@@ -67,6 +94,8 @@ class AppSettings {
       'playbackOrientation': playbackOrientationToString(playbackOrientation),
       'slideDurationSeconds': slideDurationSeconds,
       'playbackMode': _playbackModeToString(playbackMode),
+      'maxPlaybackDurationSeconds': maxPlaybackDurationSeconds,
+      'playbackDurationUnit': _playbackDurationUnitToString(playbackDurationUnit),
     };
   }
 
@@ -79,7 +108,35 @@ class AppSettings {
       playbackMode: _playbackModeFromString(
         json['playbackMode'] as String? ?? 'sequential',
       ),
+      maxPlaybackDurationSeconds: json['maxPlaybackDurationSeconds'] as int? ?? -1,
+      playbackDurationUnit: _playbackDurationUnitFromString(
+        json['playbackDurationUnit'] as String? ?? 'hours',
+      ),
     );
+  }
+
+  static String _playbackDurationUnitToString(PlaybackDurationUnit unit) {
+    switch (unit) {
+      case PlaybackDurationUnit.hours:
+        return 'hours';
+      case PlaybackDurationUnit.minutes:
+        return 'minutes';
+      case PlaybackDurationUnit.seconds:
+        return 'seconds';
+    }
+  }
+
+  static PlaybackDurationUnit _playbackDurationUnitFromString(String value) {
+    switch (value) {
+      case 'hours':
+        return PlaybackDurationUnit.hours;
+      case 'minutes':
+        return PlaybackDurationUnit.minutes;
+      case 'seconds':
+        return PlaybackDurationUnit.seconds;
+      default:
+        return PlaybackDurationUnit.hours;
+    }
   }
 
   static String _playbackModeToString(PlaybackMode mode) {

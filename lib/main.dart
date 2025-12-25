@@ -8,8 +8,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:reorderable_grid_view/reorderable_grid_view.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
-import 'models/app_settings.dart' show AppSettings, PlaybackOrientation, PlaybackMode;
+import 'models/app_settings.dart' show AppSettings, PlaybackOrientation, PlaybackMode, PlaybackDurationUnit;
 import 'models/playlist_models.dart';
 import 'services/playlist_repository.dart';
 import 'services/settings_repository.dart';
@@ -2259,6 +2260,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   VideoPlayerController? _videoController;
   Timer? _imageTimer;
+  Timer? _playbackDurationTimer; // 播放时长限制定时器
   
   // 预加载缓存：存储图片的字节数据，key为MediaItem的id
   final Map<String, Uint8List> _preloadedImageCache = {};
@@ -2271,6 +2273,8 @@ class _PlayerPageState extends State<PlayerPage>
     super.initState();
     // 进入播放页时开启沉浸式全屏（隐藏状态栏等）。
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // 启用 wakelock 防止锁屏
+    WakelockPlus.enable();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initFromArguments();
     });
@@ -2315,6 +2319,9 @@ class _PlayerPageState extends State<PlayerPage>
       _isLoading = false;
     });
 
+    // 启动播放时长限制定时器
+    _startPlaybackDurationTimer();
+
     if (playlist.items.isNotEmpty) {
       // 预加载当前图片（第一张）
       final currentItem = playlist.items[0];
@@ -2323,6 +2330,36 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await _startCurrent();
     }
+  }
+
+  /// 启动播放时长限制定时器
+  void _startPlaybackDurationTimer() {
+    // 取消之前的定时器
+    _playbackDurationTimer?.cancel();
+    
+    if (_settings == null) {
+      return;
+    }
+    
+    final maxDuration = _settings!.maxPlaybackDuration;
+    if (maxDuration == null) {
+      // 不限制播放时长
+      debugPrint('[Player] 播放时长限制：不限制');
+      return;
+    }
+    
+    debugPrint('[Player] 播放时长限制：${maxDuration.inSeconds} 秒');
+    
+    // 启动定时器
+    _playbackDurationTimer = Timer(maxDuration, () {
+      debugPrint('[Player] 播放时长已到，退出播放页面');
+      // 禁用 wakelock
+      WakelockPlus.disable();
+      // 退出播放页面
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    });
   }
 
   List<MediaItem> get _items => _playlist?.items ?? <MediaItem>[];
@@ -2709,6 +2746,10 @@ class _PlayerPageState extends State<PlayerPage>
   @override
   void dispose() {
     _cancelTimersAndVideo();
+    // 取消播放时长定时器
+    _playbackDurationTimer?.cancel();
+    // 禁用 wakelock
+    WakelockPlus.disable();
     // 清理预加载缓存
     _preloadedImageCache.clear();
     // 离开播放页时恢复系统 UI 显示和屏幕方向。
@@ -3191,6 +3232,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   final SettingsRepository _repository = const SettingsRepository();
   final TextEditingController _durationController = TextEditingController();
+  final TextEditingController _playbackDurationController = TextEditingController();
 
   AppSettings? _settings;
   bool _isLoading = true;
@@ -3201,9 +3243,20 @@ class _SettingsPageState extends State<SettingsPage> {
     _loadSettings();
     // 监听切换间隔输入变化，实时保存
     _durationController.addListener(_onDurationChanged);
+    // 监听播放时长输入变化，实时保存
+    _playbackDurationController.addListener(_onPlaybackDurationChanged);
   }
 
   void _onDurationChanged() {
+    // 延迟保存，避免频繁保存
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        _autoSaveSettings();
+      }
+    });
+  }
+
+  void _onPlaybackDurationChanged() {
     // 延迟保存，避免频繁保存
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) {
@@ -3217,8 +3270,44 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() {
       _settings = settings;
       _durationController.text = settings.slideDurationSeconds.toString();
+      // 根据单位显示播放时长值
+      _playbackDurationController.text = _getPlaybackDurationDisplayValue(settings);
       _isLoading = false;
     });
+  }
+
+  /// 根据单位获取播放时长的显示值
+  String _getPlaybackDurationDisplayValue(AppSettings settings) {
+    if (settings.maxPlaybackDurationSeconds == -1) {
+      return '';
+    }
+    switch (settings.playbackDurationUnit) {
+      case PlaybackDurationUnit.hours:
+        return (settings.maxPlaybackDurationSeconds ~/ 3600).toString();
+      case PlaybackDurationUnit.minutes:
+        return (settings.maxPlaybackDurationSeconds ~/ 60).toString();
+      case PlaybackDurationUnit.seconds:
+        return settings.maxPlaybackDurationSeconds.toString();
+    }
+  }
+
+  /// 根据输入值和单位计算总秒数
+  int _calculateTotalSeconds(String value, PlaybackDurationUnit unit) {
+    final intValue = int.tryParse(value.trim());
+    if (intValue == null || intValue < 0) {
+      return -1; // 无效值，返回 -1 表示不限制
+    }
+    if (intValue == 0) {
+      return -1; // 0 也表示不限制
+    }
+    switch (unit) {
+      case PlaybackDurationUnit.hours:
+        return intValue * 3600;
+      case PlaybackDurationUnit.minutes:
+        return intValue * 60;
+      case PlaybackDurationUnit.seconds:
+        return intValue;
+    }
   }
 
   /// 实时保存设置
@@ -3228,18 +3317,27 @@ class _SettingsPageState extends State<SettingsPage> {
     final durationText = _durationController.text.trim();
     final duration = int.tryParse(durationText);
     
+    // 计算播放时长限制（总秒数）
+    final playbackDurationText = _playbackDurationController.text.trim();
+    final maxPlaybackDurationSeconds = _calculateTotalSeconds(
+      playbackDurationText,
+      _settings!.playbackDurationUnit,
+    );
+    
     // 如果 duration 无效，使用当前设置的值（不更新 duration）
     // 这样即使 duration 输入框无效，也能保存播放方向和播放模式
     final updated = _settings!.copyWith(
       slideDurationSeconds: (duration != null && duration >= 1) ? duration : _settings!.slideDurationSeconds,
+      maxPlaybackDurationSeconds: maxPlaybackDurationSeconds,
     );
     await _repository.save(updated);
-    debugPrint('[SettingsPage] _autoSaveSettings: 自动保存完成 - orientation=${updated.playbackOrientation}, mode=${updated.playbackMode}, duration=${updated.slideDurationSeconds}');
+    debugPrint('[SettingsPage] _autoSaveSettings: 自动保存完成 - orientation=${updated.playbackOrientation}, mode=${updated.playbackMode}, duration=${updated.slideDurationSeconds}, maxPlaybackDuration=${updated.maxPlaybackDurationSeconds}s');
   }
 
   @override
   void dispose() {
     _durationController.dispose();
+    _playbackDurationController.dispose();
     super.dispose();
   }
 
@@ -3404,6 +3502,92 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
         ),
       ),
+                    ),
+                    const SizedBox(height: 16),
+                    // 播放时长限制设置
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              '播放时长限制',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: TextField(
+                                    controller: _playbackDurationController,
+                                    decoration: InputDecoration(
+                                      labelText: '时长',
+                                      hintText: '留空表示不限制',
+                                      border: const OutlineInputBorder(),
+                                      helperText: '留空或输入 0 表示不限制播放时长',
+                                    ),
+                                    keyboardType: TextInputType.number,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  flex: 1,
+                                  child: DropdownButtonFormField<PlaybackDurationUnit>(
+                                    value: _settings!.playbackDurationUnit,
+                                    decoration: const InputDecoration(
+                                      labelText: '单位',
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                                    ),
+                                    items: const [
+                                      DropdownMenuItem(
+                                        value: PlaybackDurationUnit.hours,
+                                        child: Text('小时'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: PlaybackDurationUnit.minutes,
+                                        child: Text('分钟'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: PlaybackDurationUnit.seconds,
+                                        child: Text('秒'),
+                                      ),
+                                    ],
+                                    onChanged: (value) {
+                                      if (value != null) {
+                                        // 先保存当前输入的值（转换为总秒数）
+                                        final currentText = _playbackDurationController.text.trim();
+                                        final totalSeconds = _calculateTotalSeconds(
+                                          currentText,
+                                          _settings!.playbackDurationUnit,
+                                        );
+                                        
+                                        setState(() {
+                                          // 更新单位
+                                          _settings = _settings!.copyWith(
+                                            playbackDurationUnit: value,
+                                            maxPlaybackDurationSeconds: totalSeconds,
+                                          );
+                                          // 根据新单位更新显示值
+                                          _playbackDurationController.text = _getPlaybackDurationDisplayValue(_settings!);
+                                        });
+                                        // 实时保存
+                                        _autoSaveSettings();
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ],
       ),
