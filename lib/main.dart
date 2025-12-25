@@ -1267,9 +1267,12 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
       debugPrint('[EditPage] _addImages: 处理图片 $i - path=$originalPath');
       
       try {
+        // 提取原始文件名
+        final originalFileName = _fileName(originalPath);
+        
         // 使用文件管理器添加文件（去重）
         final managedPath = await _fileManager.addFile(originalPath);
-        debugPrint('[EditPage] _addImages: 图片 $i 已添加到文件管理器 - managedPath=$managedPath');
+        debugPrint('[EditPage] _addImages: 图片 $i 已添加到文件管理器 - managedPath=$managedPath, originalFileName=$originalFileName');
         
         newItems.add(
           MediaItem(
@@ -1277,6 +1280,7 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
             type: MediaType.image,
             uri: managedPath,
             orderIndex: startIndex + newItems.length,
+            originalFileName: originalFileName,
           ),
         );
       } catch (e) {
@@ -1308,15 +1312,19 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
     debugPrint('[EditPage] _addVideo: 处理视频 - path=$originalPath');
     
     try {
+      // 提取原始文件名
+      final originalFileName = _fileName(originalPath);
+      
       // 使用文件管理器添加文件（去重）
       final managedPath = await _fileManager.addFile(originalPath);
-      debugPrint('[EditPage] _addVideo: 视频已添加到文件管理器 - managedPath=$managedPath');
+      debugPrint('[EditPage] _addVideo: 视频已添加到文件管理器 - managedPath=$managedPath, originalFileName=$originalFileName');
       
       final newItem = MediaItem(
         id: generateId('mi'),
         type: MediaType.video,
         uri: managedPath,
         orderIndex: _items.length,
+        originalFileName: originalFileName,
       );
 
       setState(() {
@@ -1375,7 +1383,7 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
       ),
       child: ListTile(
         leading: _buildMediaThumbnail(item),
-        title: Text(_fileName(item.uri)),
+        title: Text(_getDisplayFileName(item)),
         subtitle: Text(
           item.type == MediaType.image ? '图片' : '视频',
         ),
@@ -1489,7 +1497,7 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
                     children: [
                       // 文件名（截断显示）
                       Text(
-                        _fileName(item.uri),
+                        _getDisplayFileName(item),
                         style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
@@ -1750,6 +1758,12 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
     // 简单从路径中提取文件名，兼容 / 和 \ 分隔符。
     final parts = path.split(RegExp(r'[\\/]+'));
     return parts.isNotEmpty ? parts.last : path;
+  }
+
+  /// 获取媒体项的显示名称（优先使用原始文件名）
+  String _getDisplayFileName(MediaItem item) {
+    // 优先使用原始文件名，如果没有则从路径中提取
+    return item.originalFileName ?? _fileName(item.uri);
   }
 
   Widget _buildMediaThumbnail(MediaItem item) {

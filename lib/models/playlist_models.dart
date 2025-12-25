@@ -34,6 +34,7 @@ class MediaItem {
     required this.uri,
     required this.orderIndex,
     this.durationSeconds,
+    this.originalFileName,
   });
 
   final String id;
@@ -44,12 +45,16 @@ class MediaItem {
   /// 对图片是停留时长；对视频是裁剪后的时长（可选）。
   final int? durationSeconds;
 
+  /// 原始文件名（用于显示，避免显示哈希值文件名）。
+  final String? originalFileName;
+
   MediaItem copyWith({
     String? id,
     MediaType? type,
     String? uri,
     int? orderIndex,
     int? durationSeconds,
+    String? originalFileName,
   }) {
     return MediaItem(
       id: id ?? this.id,
@@ -57,6 +62,7 @@ class MediaItem {
       uri: uri ?? this.uri,
       orderIndex: orderIndex ?? this.orderIndex,
       durationSeconds: durationSeconds ?? this.durationSeconds,
+      originalFileName: originalFileName ?? this.originalFileName,
     );
   }
 
@@ -67,6 +73,7 @@ class MediaItem {
       'uri': uri,
       'orderIndex': orderIndex,
       'durationSeconds': durationSeconds,
+      'originalFileName': originalFileName,
     };
   }
 
@@ -77,6 +84,7 @@ class MediaItem {
       uri: json['uri'] as String,
       orderIndex: (json['orderIndex'] as num).toInt(),
       durationSeconds: (json['durationSeconds'] as num?)?.toInt(),
+      originalFileName: json['originalFileName'] as String?,
     );
   }
 }
