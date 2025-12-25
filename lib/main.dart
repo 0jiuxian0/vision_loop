@@ -172,6 +172,7 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
   bool _isLoading = true;
   List<Playlist> _playlists = <Playlist>[];
   final ValueNotifier<int> _playlistCountNotifier = ValueNotifier<int>(0);
+  ViewMode _viewMode = ViewMode.grid; // 默认网格视图
 
   @override
   void initState() {
@@ -351,6 +352,18 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Vision Loop 播放列表'),
+        actions: [
+          // 视图切换按钮
+          IconButton(
+            icon: Icon(_viewMode == ViewMode.list ? Icons.grid_view : Icons.view_list),
+            onPressed: () {
+              setState(() {
+                _viewMode = _viewMode == ViewMode.list ? ViewMode.grid : ViewMode.list;
+              });
+            },
+            tooltip: _viewMode == ViewMode.list ? '切换到网格视图' : '切换到列表视图',
+          ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -358,36 +371,406 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
               ? const Center(
                   child: Text('暂无幻灯片项目，点击左下角按钮新建一个吧。'),
                 )
-              : ReorderableListView(
-                  padding: const EdgeInsets.only(bottom: 80), // 底部 padding，为底部工具栏留出空间
-                  onReorder: (oldIndex, newIndex) async {
-                    // 如果新位置在旧位置之后，需要调整索引（因为移除旧项后，后面的项会前移）
-                    if (newIndex > oldIndex) {
-                      newIndex -= 1;
-                    }
-                    
-                    // 移动项目
-                    final playlist = _playlists.removeAt(oldIndex);
-                    _playlists.insert(newIndex, playlist);
-                    
-                    // 重新分配 sortOrder（从 0 开始）
-                    final updatedPlaylists = <Playlist>[];
-                    for (var i = 0; i < _playlists.length; i++) {
-                      updatedPlaylists.add(_playlists[i].copyWith(sortOrder: i));
-                    }
-                    
-                    // 保存所有播放列表
-                    await _repository.saveAll(updatedPlaylists);
-                    
-                    // 刷新列表
-                    await _loadPlaylists();
-                    debugPrint('[PlaylistListPage] onReorder: 从位置 $oldIndex 移动到 $newIndex');
-                  },
-                  children: [
-                    for (var index = 0; index < _playlists.length; index++)
-                      _buildReorderablePlaylistItem(_playlists[index], index),
-                  ],
+              : _viewMode == ViewMode.list
+                  ? ReorderableListView(
+                      padding: const EdgeInsets.only(bottom: 80), // 底部 padding，为底部工具栏留出空间
+                      onReorder: (oldIndex, newIndex) async {
+                        // 如果新位置在旧位置之后，需要调整索引（因为移除旧项后，后面的项会前移）
+                        if (newIndex > oldIndex) {
+                          newIndex -= 1;
+                        }
+                        
+                        // 移动项目
+                        final playlist = _playlists.removeAt(oldIndex);
+                        _playlists.insert(newIndex, playlist);
+                        
+                        // 重新分配 sortOrder（从 0 开始）
+                        final updatedPlaylists = <Playlist>[];
+                        for (var i = 0; i < _playlists.length; i++) {
+                          updatedPlaylists.add(_playlists[i].copyWith(sortOrder: i));
+                        }
+                        
+                        // 保存所有播放列表
+                        await _repository.saveAll(updatedPlaylists);
+                        
+                        // 刷新列表
+                        await _loadPlaylists();
+                        debugPrint('[PlaylistListPage] ListView onReorder: 从位置 $oldIndex 移动到 $newIndex');
+                      },
+                      children: [
+                        for (var index = 0; index < _playlists.length; index++)
+                          _buildReorderablePlaylistItem(_playlists[index], index),
+                      ],
+                    )
+                  : _buildPlaylistGridView(      ),
+    );
+  }
+
+  /// 构建播放列表网格视图（支持拖拽排序）
+  Widget _buildPlaylistGridView() {
+    return ReorderableGridView.count(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 80), // 底部 padding，为底部工具栏留出空间
+      crossAxisCount: 2, // 2列
+      crossAxisSpacing: 8,
+      mainAxisSpacing: 8,
+      childAspectRatio: 0.75, // 宽高比，可以根据需要调整
+      children: [
+        for (var index = 0; index < _playlists.length; index++)
+          _buildPlaylistGridItem(_playlists[index], index),
+      ],
+      onReorder: (oldIndex, newIndex) async {
+        // 如果新位置在旧位置之后，需要调整索引（因为移除旧项后，后面的项会前移）
+        if (newIndex > oldIndex) {
+          newIndex -= 1;
+        }
+        
+        // 移动项目
+        final playlist = _playlists.removeAt(oldIndex);
+        _playlists.insert(newIndex, playlist);
+        
+        // 重新分配 sortOrder（从 0 开始）
+        final updatedPlaylists = <Playlist>[];
+        for (var i = 0; i < _playlists.length; i++) {
+          updatedPlaylists.add(_playlists[i].copyWith(sortOrder: i));
+        }
+        
+        // 保存所有播放列表
+        await _repository.saveAll(updatedPlaylists);
+        
+        // 刷新列表
+        await _loadPlaylists();
+        debugPrint('[PlaylistListPage] GridView onReorder: 从位置 $oldIndex 移动到 $newIndex');
+      },
+    );
+  }
+
+  /// 构建播放列表网格项
+  Widget _buildPlaylistGridItem(Playlist playlist, int index) {
+    return Card(
+      key: ValueKey(playlist.id), // 使用 playlist.id 作为唯一 key，用于拖拽排序
+      elevation: 2,
+      child: InkWell(
+        onTap: () => _openEditor(playlist: playlist),
+        borderRadius: BorderRadius.circular(4),
+        child: Stack(
+        children: [
+          // 主要内容区域
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 预览图（占主要空间）
+              Expanded(
+                flex: 3,
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                  child: _buildPlaylistThumbnailForGrid(playlist),
                 ),
+              ),
+              // 底部信息区域
+              Expanded(
+                flex: 1,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // 播放列表名称（截断显示）
+                      Text(
+                        playlist.name,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      // 媒体数量
+                      Text(
+                        '共 ${playlist.items.length} 个媒体项',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          // 操作按钮区域（右上角）
+          Positioned(
+            top: 4,
+            right: 4,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 播放按钮
+                Material(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(12),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: playlist.items.isEmpty
+                        ? null
+                        : () {
+                            Navigator.of(context).pushNamed(
+                              PlayerPage.routeName,
+                              arguments: playlist.id,
+                            );
+                          },
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.play_arrow,
+                        size: 16,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                // 删除按钮
+                Material(
+                  color: Colors.red.shade700,
+                  borderRadius: BorderRadius.circular(12),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (context) {
+                          return AlertDialog(
+                            title: const Text('删除幻灯片'),
+                            content: Text('确定要删除 "${playlist.name}" 吗？'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(context).pop(false),
+                                child: const Text('取消'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.of(context).pop(true),
+                                child: const Text('删除'),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+
+                      if (confirm == true) {
+                        await _repository.deleteById(playlist.id);
+                        // 删除后需要重新分配 sortOrder
+                        final all = await _repository.loadAll();
+                        final updated = <Playlist>[];
+                        for (var i = 0; i < all.length; i++) {
+                          updated.add(all[i].copyWith(sortOrder: i));
+                        }
+                        await _repository.saveAll(updated);
+                        // 刷新列表（会自动更新 _playlistCountNotifier）
+                        await _loadPlaylists();
+                      }
+                    },
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.close,
+                        size: 16,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      ),
+    );
+  }
+
+  /// 构建播放列表网格视图的预览图（更大的尺寸）
+  Widget _buildPlaylistThumbnailForGrid(Playlist playlist) {
+    // 如果没有媒体项，显示默认图标
+    if (playlist.items.isEmpty) {
+      return Container(
+        color: Colors.grey.shade300,
+        child: const Center(
+          child: Icon(Icons.image, color: Colors.grey, size: 48),
+        ),
+      );
+    }
+
+    // 获取第一个媒体项
+    final firstItem = playlist.items.first;
+    
+    if (firstItem.type == MediaType.image) {
+      return _buildImageThumbnailForGrid(firstItem.uri);
+    } else {
+      return _buildVideoThumbnailForGrid(firstItem.uri);
+    }
+  }
+
+  /// 构建图片缩略图（网格视图，更大的尺寸）
+  Widget _buildImageThumbnailForGrid(String imagePath) {
+    final file = File(imagePath);
+    return FutureBuilder<Uint8List?>(
+      future: _loadImageBytesForList(file),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            color: Colors.grey.shade800,
+            child: const Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.hasError || snapshot.data == null || snapshot.data!.isEmpty) {
+          // 尝试使用原生解码器
+          return FutureBuilder<Uint8List?>(
+            future: _decodeImageWithNativeForList(imagePath),
+            builder: (context, nativeSnapshot) {
+              if (nativeSnapshot.connectionState == ConnectionState.waiting) {
+                return Container(
+                  color: Colors.grey.shade800,
+                  child: const Center(
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  ),
+                );
+              }
+
+              if (nativeSnapshot.hasData && nativeSnapshot.data != null) {
+                return Image.memory(
+                  nativeSnapshot.data!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) {
+                    return Container(
+                      color: Colors.grey.shade300,
+                      child: const Icon(Icons.broken_image, color: Colors.grey),
+                    );
+                  },
+                );
+              }
+
+              return Container(
+                color: Colors.grey.shade300,
+                child: const Icon(Icons.broken_image, color: Colors.grey),
+              );
+            },
+          );
+        }
+
+        return Image.memory(
+          snapshot.data!,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            // Flutter解码失败，尝试原生解码器
+            return FutureBuilder<Uint8List?>(
+              future: _decodeImageWithNativeForList(imagePath),
+              builder: (context, nativeSnapshot) {
+                if (nativeSnapshot.connectionState == ConnectionState.waiting) {
+                  return Container(
+                    color: Colors.grey.shade800,
+                    child: const Center(
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    ),
+                  );
+                }
+
+                if (nativeSnapshot.hasData && nativeSnapshot.data != null) {
+                  return Image.memory(
+                    nativeSnapshot.data!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) {
+                      return Container(
+                        color: Colors.grey.shade300,
+                        child: const Icon(Icons.broken_image, color: Colors.grey),
+                      );
+                    },
+                  );
+                }
+
+                return Container(
+                  color: Colors.grey.shade300,
+                  child: const Icon(Icons.broken_image, color: Colors.grey),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// 构建视频缩略图（网格视图，更大的尺寸）
+  Widget _buildVideoThumbnailForGrid(String videoPath) {
+    return FutureBuilder<String?>(
+      future: _generateVideoThumbnailForList(videoPath),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            color: Colors.grey.shade800,
+            child: const Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.hasData && snapshot.data != null) {
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.file(
+                File(snapshot.data!),
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) {
+                  return Container(
+                    color: Colors.grey.shade800,
+                    child: const Icon(Icons.videocam, color: Colors.white),
+                  );
+                },
+              ),
+              // 视频图标叠加层
+              Positioned(
+                bottom: 4,
+                right: 4,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Icon(
+                    Icons.play_circle_filled,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
+
+        return Container(
+          color: Colors.grey.shade800,
+          child: const Icon(Icons.videocam, color: Colors.white),
+        );
+      },
     );
   }
 
