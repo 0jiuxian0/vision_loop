@@ -394,6 +394,43 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
     _autoSave();
   }
 
+  /// 清空所有媒体项
+  Future<void> _clearAllItems() async {
+    if (_items.isEmpty) {
+      // 如果列表已经为空，不需要显示确认对话框
+      return;
+    }
+
+    // 显示确认对话框
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认清空'),
+        content: Text('确定要清空所有 ${_items.length} 个媒体项吗？此操作不可恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('清空', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      setState(() {
+        _items.clear();
+        _playlist = _playlist?.copyWith(items: _items);
+      });
+      // 实时保存
+      _autoSave();
+      debugPrint('[EditPage] _clearAllItems: 已清空所有媒体项');
+    }
+  }
+
   /// 使用原生Android解码器解码图片（编辑页使用）
   Future<Uint8List?> _decodeImageWithNativeForEdit(String imagePath) async {
     try {
@@ -768,7 +805,7 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
                           itemCount: _items.length,
                           separatorBuilder: (_, __) =>
                               const Divider(height: 1),
-                          padding: const EdgeInsets.only(bottom: 240), // 底部 padding，避免被3个悬浮按钮挡住（每个按钮高度约56，加上间距）
+                          padding: const EdgeInsets.only(bottom: 280), // 底部 padding，避免被4个悬浮按钮挡住（每个按钮高度约56，加上间距）
                           itemBuilder: (context, index) {
                             final item = _items[index];
                             return ListTile(
@@ -817,6 +854,14 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
             onPressed: _addImages,
             child: const Icon(Icons.photo),
             tooltip: '添加图片',
+          ),
+          const SizedBox(height: 16),
+          FloatingActionButton(
+            heroTag: 'clear',
+            onPressed: _items.isEmpty ? null : _clearAllItems,
+            backgroundColor: Colors.red,
+            child: const Icon(Icons.delete_sweep),
+            tooltip: '清空全部',
           ),
         ],
       ),
