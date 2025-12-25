@@ -2842,15 +2842,20 @@ class _PlayerPageState extends State<PlayerPage>
                           right: 0,
                           bottom: 0,
                           child: SafeArea(
-                            child: Container(
-                              margin: const EdgeInsets.all(8),
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 16),
-                              decoration: BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.circular(24),
+                            child: Align(
+                              alignment: Alignment.bottomCenter,
+                              child: IntrinsicWidth(
+                                child: Container(
+                                  margin: const EdgeInsets.all(8),
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black54,
+                                    borderRadius: BorderRadius.circular(24),
+                                  ),
+                                  child: _buildControls(context),
+                                ),
                               ),
-                              child: _buildControls(context),
                             ),
                           ),
                         ),
