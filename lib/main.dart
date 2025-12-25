@@ -466,17 +466,113 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
                   child: _buildPlaylistThumbnailForGrid(playlist),
                 ),
               ),
+              // 操作按钮区域（预览图和信息区域之间）
+              Container(
+                height: 36,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  border: Border(
+                    top: BorderSide(color: Colors.grey.shade300, width: 0.5),
+                    bottom: BorderSide(color: Colors.grey.shade300, width: 0.5),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    // 播放按钮
+                    Expanded(
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: playlist.items.isEmpty
+                              ? null
+                              : () {
+                                  Navigator.of(context).pushNamed(
+                                    PlayerPage.routeName,
+                                    arguments: playlist.id,
+                                  );
+                                },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: const Icon(
+                              Icons.play_arrow,
+                              size: 18,
+                              color: Colors.blue,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // 分隔线
+                    Container(
+                      width: 0.5,
+                      color: Colors.grey.shade300,
+                    ),
+                    // 删除按钮
+                    Expanded(
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () async {
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (context) {
+                                return AlertDialog(
+                                  title: const Text('删除幻灯片'),
+                                  content: Text('确定要删除 "${playlist.name}" 吗？'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.of(context).pop(false),
+                                      child: const Text('取消'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () => Navigator.of(context).pop(true),
+                                      child: const Text('删除'),
+                                    ),
+                                  ],
+                                );
+                              },
+                            );
+
+                            if (confirm == true) {
+                              await _repository.deleteById(playlist.id);
+                              // 删除后需要重新分配 sortOrder
+                              final all = await _repository.loadAll();
+                              final updated = <Playlist>[];
+                              for (var i = 0; i < all.length; i++) {
+                                updated.add(all[i].copyWith(sortOrder: i));
+                              }
+                              await _repository.saveAll(updated);
+                              // 刷新列表（会自动更新 _playlistCountNotifier）
+                              await _loadPlaylists();
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: const Icon(
+                              Icons.delete_outline,
+                              size: 18,
+                              color: Colors.red,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               // 底部信息区域
               Expanded(
                 flex: 1,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: Column(
+        child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
+          children: [
                       // 播放列表名称（截断显示）
-                      Text(
+            Text(
                         playlist.name,
                         style: const TextStyle(
                           fontSize: 12,
@@ -493,97 +589,12 @@ class _PlaylistListPageState extends State<PlaylistListPage> {
                           fontSize: 10,
                           color: Colors.grey[600],
                         ),
-                      ),
-                    ],
-                  ),
-                ),
+            ),
+          ],
+        ),
+      ),
               ),
             ],
-          ),
-          // 操作按钮区域（右上角）
-          Positioned(
-            top: 4,
-            right: 4,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 播放按钮
-                Material(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: playlist.items.isEmpty
-                        ? null
-                        : () {
-                            Navigator.of(context).pushNamed(
-                              PlayerPage.routeName,
-                              arguments: playlist.id,
-                            );
-                          },
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
-                      child: Icon(
-                        Icons.play_arrow,
-                        size: 16,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                // 删除按钮
-                Material(
-                  color: Colors.red.shade700,
-                  borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () async {
-                      final confirm = await showDialog<bool>(
-                        context: context,
-                        builder: (context) {
-                          return AlertDialog(
-                            title: const Text('删除幻灯片'),
-                            content: Text('确定要删除 "${playlist.name}" 吗？'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.of(context).pop(false),
-                                child: const Text('取消'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.of(context).pop(true),
-                                child: const Text('删除'),
-                              ),
-                            ],
-                          );
-                        },
-                      );
-
-                      if (confirm == true) {
-                        await _repository.deleteById(playlist.id);
-                        // 删除后需要重新分配 sortOrder
-                        final all = await _repository.loadAll();
-                        final updated = <Playlist>[];
-                        for (var i = 0; i < all.length; i++) {
-                          updated.add(all[i].copyWith(sortOrder: i));
-                        }
-                        await _repository.saveAll(updated);
-                        // 刷新列表（会自动更新 _playlistCountNotifier）
-                        await _loadPlaylists();
-                      }
-                    },
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
-                      child: Icon(
-                        Icons.close,
-                        size: 16,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
           ),
         ],
       ),
@@ -1382,17 +1393,43 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
                   child: _buildMediaThumbnailForGrid(item),
                 ),
               ),
+              // 操作按钮区域（预览图和信息区域之间）
+              Container(
+                height: 36,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  border: Border(
+                    top: BorderSide(color: Colors.grey.shade300, width: 0.5),
+                    bottom: BorderSide(color: Colors.grey.shade300, width: 0.5),
+                  ),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => _removeItemById(item.id),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: const Icon(
+                        Icons.delete_outline,
+                        size: 18,
+                        color: Colors.red,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
               // 底部信息区域
               Expanded(
                 flex: 1,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Column(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+                    children: [
                       // 文件名（截断显示）
-            Text(
+                      Text(
                         _fileName(item.uri),
                         style: const TextStyle(
                           fontSize: 12,
@@ -1409,33 +1446,12 @@ class _PlaylistEditPageState extends State<PlaylistEditPage> {
                           fontSize: 10,
                           color: Colors.grey[600],
                         ),
-            ),
-          ],
-        ),
-      ),
-              ),
-            ],
-          ),
-          // 删除按钮（右上角）
-          Positioned(
-            top: 4,
-            right: 4,
-            child: Material(
-              color: Colors.black54,
-              borderRadius: BorderRadius.circular(12),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () => _removeItemById(item.id),
-                child: const Padding(
-                  padding: EdgeInsets.all(4),
-                  child: Icon(
-                    Icons.close,
-                    size: 16,
-                    color: Colors.white,
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ),
+            ],
           ),
         ],
       ),
