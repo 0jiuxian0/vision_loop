@@ -17,6 +17,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.example.vision_loop"
+    // 使用 Flutter 默认的 compileSdk，让 Flutter 自动选择已安装的 SDK 版本
     compileSdk = flutter.compileSdkVersion
     // ndkVersion = flutter.ndkVersion
     // 使用已安装的 NDK 版本
@@ -37,7 +38,7 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = flutter.targetSdkVersion  // 使用 Flutter 默认的 targetSdk
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

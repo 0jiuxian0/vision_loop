@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +16,8 @@ import 'models/playlist_models.dart';
 import 'services/playlist_repository.dart';
 import 'services/settings_repository.dart';
 import 'services/media_file_manager.dart';
+import 'services/logger.dart';
+import 'services/log_exporter.dart';
 import 'utils/id_generator.dart';
 
 // Platform Channel 用于调用原生图片解码器
@@ -23,13 +26,30 @@ const MethodChannel _imageDecoderChannel = MethodChannel('com.example.vision_loo
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // 初始化日志系统
+  final logger = Logger();
+  await logger.initialize();
+  
+  // 捕获 Flutter 框架异常
+  FlutterError.onError = (FlutterErrorDetails details) {
+    logger.error('Flutter', '未捕获的 Flutter 异常', details.exception, details.stack);
+    FlutterError.presentError(details);
+  };
+  
+  // 捕获异步异常
+  ui.PlatformDispatcher.instance.onError = (error, stack) {
+    logger.error('Platform', '未捕获的平台异常', error, stack);
+    return true;
+  };
+  
   // 初始化文件管理器（在后台进行，不阻塞 UI）
   // initialize() 内部已经会清理孤立文件，所以不需要重复调用
   MediaFileManager().initialize().catchError((error) {
-    debugPrint('[main] 文件管理器初始化失败: $error');
+    logger.error('main', '文件管理器初始化失败', error);
     // 即使初始化失败，也继续启动应用
   });
   
+  logger.info('main', '应用启动');
   runApp(const VisionLoopApp());
 }
 
@@ -2250,6 +2270,7 @@ class _PlayerPageState extends State<PlayerPage>
     with SingleTickerProviderStateMixin {
   final PlaylistRepository _repository = const PlaylistRepository();
   final SettingsRepository _settingsRepository = const SettingsRepository();
+  final Logger _logger = Logger();
 
   Playlist? _playlist;
   AppSettings? _settings;
@@ -2284,6 +2305,8 @@ class _PlayerPageState extends State<PlayerPage>
     final args = ModalRoute.of(context)?.settings.arguments;
     final String? playlistId = args is String ? args : null;
     if (playlistId == null) {
+      _logger.warning('Playback', '播放页面初始化失败：未提供播放列表ID');
+      _logger.info('UI', 'setState调用 - 原因=播放页面初始化失败');
       setState(() {
         _isLoading = false;
       });
@@ -2295,6 +2318,8 @@ class _PlayerPageState extends State<PlayerPage>
     final playlist =
         all.firstWhere((p) => p.id == playlistId, orElse: () => all.first);
     final settings = await _settingsRepository.load();
+    
+    _logger.info('Playback', '播放开始 - playlistId=$playlistId, itemCount=${playlist.items.length}, mode=${settings.playbackMode}, loop=${playlist.settings.loop}');
     
     // 重置随机播放历史
     _randomPlayedIndices.clear();
@@ -2387,27 +2412,31 @@ class _PlayerPageState extends State<PlayerPage>
       // 检查文件是否存在
       final file = File(item.uri);
       final exists = await file.exists();
-      debugPrint('[Player] _startCurrent: 图片文件检查 - path=${item.uri}, exists=$exists, size=${exists ? await file.length() : 0}');
+      final fileSize = exists ? await file.length() : 0;
+      _logger.info('Image', '切换到图片 - index=$_currentIndex, path=${item.uri}, exists=$exists, size=$fileSize bytes');
       
       if (!exists) {
-        debugPrint('[Player] _startCurrent: 图片文件不存在！');
+        _logger.error('Image', '图片文件不存在', null);
+        return;
       }
+
+      _logger.info('Image', '开始加载图片 - path=${item.uri}');
 
       // 优先使用全局设置的切换间隔
       final durationSeconds = item.durationSeconds ??
           _settings?.slideDurationSeconds ??
           _playlist?.settings.slideDurationSeconds ??
           3;
-      debugPrint('[Player] _startCurrent: 图片切换间隔=${durationSeconds}秒');
+      _logger.info('Image', '图片切换间隔=${durationSeconds}秒');
       
       if (_isPlaying) {
         _imageTimer = Timer(Duration(seconds: durationSeconds), () {
-          debugPrint('[Player] _startCurrent: 图片定时器触发，准备切换到下一张');
+          _logger.info('Image', '图片定时器触发，准备切换到下一张 - index=$_currentIndex');
           _next();
         });
       }
       if (mounted) {
-        debugPrint('[Player] _startCurrent: 调用setState更新图片显示');
+        _logger.info('UI', 'setState调用 - 原因=图片显示, currentIndex=$_currentIndex');
         setState(() {});
       }
       
@@ -2417,31 +2446,77 @@ class _PlayerPageState extends State<PlayerPage>
     } else {
       final file = File(item.uri);
       final exists = await file.exists();
-      debugPrint('[Player] _startCurrent: 视频文件检查 - path=${item.uri}, exists=$exists');
+      final fileSize = exists ? await file.length() : 0;
+      _logger.info('Video', '视频文件检查 - path=${item.uri}, exists=$exists, size=$fileSize bytes');
       
-      final controller = VideoPlayerController.file(file);
-      _videoController = controller;
-      debugPrint('[Player] _startCurrent: 开始初始化视频控制器');
-      await controller.initialize();
-      debugPrint('[Player] _startCurrent: 视频控制器初始化完成 - initialized=${controller.value.isInitialized}, duration=${controller.value.duration}');
-      await controller.setLooping(false);
-
-      controller.addListener(() {
-        if (!controller.value.isInitialized) return;
-        if (controller.value.position >= controller.value.duration &&
-            !controller.value.isLooping) {
-          debugPrint('[Player] _startCurrent: 视频播放完成，准备切换到下一个');
-          _next();
-        }
-      });
-
-      if (_isPlaying) {
-        debugPrint('[Player] _startCurrent: 开始播放视频');
-        await controller.play();
+      if (!exists) {
+        _logger.error('Video', '视频文件不存在', null);
+        return;
       }
-      if (mounted) {
-        debugPrint('[Player] _startCurrent: 调用setState更新视频显示');
-        setState(() {});
+      
+      try {
+        _logger.info('Video', '创建控制器 - path=${item.uri}');
+        final controller = VideoPlayerController.file(file);
+        _videoController = controller;
+        
+        _logger.info('Video', '初始化开始 - path=${item.uri}');
+        await controller.initialize();
+        
+        final isInitialized = controller.value.isInitialized;
+        final duration = controller.value.duration;
+        final size = controller.value.size;
+        
+        if (!isInitialized) {
+          _logger.error('Video', '视频控制器初始化失败 - path=${item.uri}, isInitialized=false', null);
+          return;
+        }
+        
+        _logger.info('Video', '初始化成功 - path=${item.uri}, duration=${duration.inSeconds}s, size=${size.width}x${size.height}');
+        await controller.setLooping(false);
+
+        // 用于控制日志记录频率
+        int lastLoggedPositionSeconds = -1;
+        
+        controller.addListener(() {
+          if (!controller.value.isInitialized) {
+            _logger.warning('Video', '控制器未初始化，跳过监听回调');
+            return;
+          }
+          
+          final position = controller.value.position;
+          final duration = controller.value.duration;
+          final isPlaying = controller.value.isPlaying;
+          final currentPositionSeconds = position.inSeconds;
+          
+          // 每5秒记录一次播放状态
+          if (currentPositionSeconds != lastLoggedPositionSeconds && 
+              currentPositionSeconds % 5 == 0) {
+            _logger.info('Video', '播放状态 - path=${item.uri}, position=${currentPositionSeconds}s/${duration.inSeconds}s, isPlaying=$isPlaying');
+            lastLoggedPositionSeconds = currentPositionSeconds;
+          }
+          
+          if (position >= duration && !controller.value.isLooping) {
+            _logger.info('Video', '视频播放完成 - path=${item.uri}, duration=${duration.inSeconds}s');
+            _next();
+          }
+        });
+
+        if (_isPlaying) {
+          _logger.info('Video', '播放开始 - path=${item.uri}');
+          await controller.play();
+        }
+        
+        if (mounted) {
+          _logger.info('UI', 'setState调用 - 原因=视频初始化完成, path=${item.uri}');
+          setState(() {});
+        }
+      } catch (e, stackTrace) {
+        _logger.error('Video', '视频初始化异常 - path=${item.uri}', e, stackTrace);
+        // 尝试清理控制器
+        try {
+          _videoController?.dispose();
+          _videoController = null;
+        } catch (_) {}
       }
     }
   }
@@ -2449,10 +2524,20 @@ class _PlayerPageState extends State<PlayerPage>
   void _cancelTimersAndVideo() {
     _imageTimer?.cancel();
     _imageTimer = null;
-    _videoController?.removeListener(() {});
-    _videoController?.pause();
-    _videoController?.dispose();
-    _videoController = null;
+    
+    if (_videoController != null) {
+      try {
+        final path = _currentItem?.uri ?? 'unknown';
+        _logger.info('Video', '释放控制器 - path=$path');
+        _videoController?.removeListener(() {});
+        _videoController?.pause();
+        _videoController?.dispose();
+        _videoController = null;
+        _logger.info('Video', '控制器已释放 - path=$path');
+      } catch (e, stackTrace) {
+        _logger.error('Video', '释放控制器失败', e, stackTrace);
+      }
+    }
   }
 
   /// 获取下一张图片的索引（考虑循环）
@@ -2488,38 +2573,55 @@ class _PlayerPageState extends State<PlayerPage>
   /// 预加载指定索引的图片
   Future<void> _preloadImageAtIndex(int index) async {
     if (index < 0 || index >= _items.length) {
-      debugPrint('[Player] _preloadImageAtIndex: 索引无效 - index=$index');
+      _logger.warning('Image', '预加载 - 索引无效 - index=$index');
       return;
     }
 
     final item = _items[index];
     // 只预加载图片，不预加载视频
     if (item.type != MediaType.image) {
-      debugPrint('[Player] _preloadImageAtIndex: 不是图片类型，跳过 - id=${item.id}, type=${item.type}');
+      _logger.info('Image', '预加载 - 不是图片类型，跳过 - id=${item.id}, type=${item.type.toString().split('.').last}');
       return;
     }
 
     // 如果已经预加载过，跳过
     if (_preloadedImageCache.containsKey(item.id)) {
-      debugPrint('[Player] _preloadImageAtIndex: 图片已预加载 - id=${item.id}, index=$index');
+      _logger.info('Image', '预加载 - 图片已预加载 - id=${item.id}, index=$index');
       return;
     }
 
-    debugPrint('[Player] _preloadImageAtIndex: 开始预加载图片 - id=${item.id}, index=$index, path=${item.uri}');
+    _logger.info('Image', '预加载开始 - index=$index, path=${item.uri}');
     
     try {
       final file = File(item.uri);
       if (!await file.exists()) {
-        debugPrint('[Player] _preloadImageAtIndex: 文件不存在，跳过预加载 - path=${item.uri}');
+        _logger.warning('Image', '预加载 - 文件不存在，跳过 - path=${item.uri}');
         return;
       }
 
       final bytes = await file.readAsBytes();
       _preloadedImageCache[item.id] = bytes;
-      debugPrint('[Player] _preloadImageAtIndex: 预加载完成 - id=${item.id}, size=${bytes.length} bytes');
+      _logger.info('Image', '预加载完成 - index=$index, path=${item.uri}, size=${bytes.length} bytes');
+      
+      // 记录内存使用情况
+      _logMemoryUsage();
     } catch (e, stackTrace) {
-      debugPrint('[Player] _preloadImageAtIndex: 预加载失败 - id=${item.id}, error=$e');
-      debugPrint('[Player] _preloadImageAtIndex: 堆栈: $stackTrace');
+      _logger.error('Image', '预加载失败 - index=$index, path=${item.uri}', e, stackTrace);
+    }
+  }
+
+  /// 记录内存使用情况
+  void _logMemoryUsage() {
+    try {
+      final cacheCount = _preloadedImageCache.length;
+      int totalSize = 0;
+      for (final bytes in _preloadedImageCache.values) {
+        totalSize += bytes.length;
+      }
+      final totalSizeMB = (totalSize / (1024 * 1024)).toStringAsFixed(2);
+      _logger.info('Memory', '预加载缓存 - count=$cacheCount, totalSize=$totalSizeMB MB');
+    } catch (e) {
+      // 忽略内存统计错误
     }
   }
 
@@ -2690,31 +2792,38 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _previous() async {
-    debugPrint('[Player] _previous: 开始切换到上一项, 当前index=$_currentIndex, 总数量=${_items.length}');
+    _logger.info('Playback', '切换到上一项 - currentIndex=$_currentIndex, totalCount=${_items.length}');
     if (_items.isEmpty) {
-      debugPrint('[Player] _previous: 媒体列表为空，退出');
+      _logger.warning('Playback', '媒体列表为空，退出');
       return;
     }
     
     final mode = _settings?.playbackMode ?? PlaybackMode.sequential;
     final prevIndex = _calculatePreviousIndex();
     
-    debugPrint('[Player] _previous: 播放模式=${mode.toString().split('.').last}, 准备切换到index=$prevIndex');
+    _logger.info('Playback', '计算上一个索引 - mode=${mode.toString().split('.').last}, currentIndex=$_currentIndex, prevIndex=$prevIndex');
+    
+    // 记录切换信息
+    final currentItem = _currentItem;
+    final prevItem = prevIndex < _items.length ? _items[prevIndex] : null;
+    if (currentItem != null && prevItem != null) {
+      _logger.info('Playback', '从 ${currentItem.type.toString().split('.').last} 切换到 ${prevItem.type.toString().split('.').last} - fromIndex=$_currentIndex, toIndex=$prevIndex');
+    }
     
     // 先更新索引，触发UI重建，然后再启动新的媒体
+    _logger.info('UI', 'setState调用 - 原因=切换到上一项, fromIndex=$_currentIndex, toIndex=$prevIndex');
     setState(() {
       _currentIndex = prevIndex;
     });
-    debugPrint('[Player] _previous: setState完成, _currentIndex已更新为=$_currentIndex');
     // 等待一帧，确保AnimatedSwitcher开始动画
     await Future.delayed(const Duration(milliseconds: 50));
-    debugPrint('[Player] _previous: 延迟完成，开始启动新媒体');
     await _startCurrent();
     // 切换后，预加载新的上一张图片
     _preloadPreviousImage();
   }
 
   Future<void> _togglePlayPause() async {
+    _logger.info('UI', 'setState调用 - 原因=播放/暂停切换, isPlaying=$_isPlaying -> ${!_isPlaying}');
     setState(() {
       _isPlaying = !_isPlaying;
     });
@@ -2745,13 +2854,16 @@ class _PlayerPageState extends State<PlayerPage>
 
   @override
   void dispose() {
+    _logger.info('Playback', '播放页面销毁 - currentIndex=$_currentIndex');
     _cancelTimersAndVideo();
     // 取消播放时长定时器
     _playbackDurationTimer?.cancel();
     // 禁用 wakelock
     WakelockPlus.disable();
     // 清理预加载缓存
+    final cacheCount = _preloadedImageCache.length;
     _preloadedImageCache.clear();
+    _logger.info('Memory', '清理预加载缓存 - count=$cacheCount');
     // 离开播放页时恢复系统 UI 显示和屏幕方向。
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations([
@@ -2780,6 +2892,7 @@ class _PlayerPageState extends State<PlayerPage>
               : GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () {
+                    _logger.info('UI', 'setState调用 - 原因=显示/隐藏控制条, showControls=$_showControls -> ${!_showControls}');
                     setState(() {
                       _showControls = !_showControls;
                     });
@@ -2868,7 +2981,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Widget _buildMediaContent(MediaItem? item) {
     if (item == null) {
-      debugPrint('[Player] _buildMediaContent: item为null，返回空容器');
+      _logger.warning('UI', '构建媒体内容 - item为null，返回空容器');
       return Container(
         key: const ValueKey<String>('empty'),
         color: Colors.black,
@@ -2877,14 +2990,16 @@ class _PlayerPageState extends State<PlayerPage>
 
     // 使用 item.id 和 _currentIndex 组合作为 key，确保每次切换时 key 都不同
     final key = ValueKey<String>('media_${item.id}_$_currentIndex');
-    debugPrint('[Player] _buildMediaContent: 构建媒体内容 - id=${item.id}, type=${item.type}, index=$_currentIndex, key=${key.value}');
+    _logger.info('UI', '构建媒体内容 - id=${item.id}, type=${item.type.toString().split('.').last}, index=$_currentIndex, key=${key.value}');
 
     if (item.type == MediaType.image) {
       final file = File(item.uri);
-      debugPrint('[Player] _buildMediaContent: 构建图片 - path=${item.uri}');
+      _logger.info('Image', '构建图片Widget - path=${item.uri}');
       
       // 优先使用预加载的缓存数据
       final cachedBytes = _preloadedImageCache[item.id];
+      final hasCache = cachedBytes != null;
+      _logger.info('Image', '图片缓存状态 - path=${item.uri}, hasCache=$hasCache, cacheSize=${hasCache ? cachedBytes.length : 0} bytes');
       
       // 不裁剪整张图片，按比例缩放，最长边铺满屏幕，另一边可能有黑边。
       return Container(
@@ -2901,18 +3016,23 @@ class _PlayerPageState extends State<PlayerPage>
 
     final controller = _videoController;
     if (controller == null || !controller.value.isInitialized) {
+      _logger.warning('Video', 'UI构建 - controller为null或未初始化, controller=${controller != null}, initialized=${controller?.value.isInitialized}');
       return const Center(
         child: CircularProgressIndicator(color: Colors.white),
       );
     }
 
+    final aspectRatio = controller.value.aspectRatio;
+    final size = controller.value.size;
+    _logger.info('Video', 'UI构建 - path=${item.uri}, aspectRatio=$aspectRatio, size=${size.width}x${size.height}, VideoPlayer widget创建');
+    
     // 视频同样保持完整画面，按比例缩放至最长边铺满，另一边允许留黑边。
     return Container(
       key: key,
       color: Colors.black,
       alignment: Alignment.center,
       child: AspectRatio(
-        aspectRatio: controller.value.aspectRatio,
+        aspectRatio: aspectRatio,
         child: VideoPlayer(controller),
       ),
     );
@@ -2926,12 +3046,12 @@ class _PlayerPageState extends State<PlayerPage>
   }) {
     // 如果缓存中有数据，直接使用（同步显示，无延迟）
     if (cachedBytes != null) {
-      debugPrint('[Player] _buildImageFromBytes: 使用预加载缓存 - id=${item.id}, size=${cachedBytes.length} bytes');
+      _logger.info('Image', '使用预加载缓存 - path=${item.uri}, size=${cachedBytes.length} bytes');
       return _buildImageWidget(item: item, bytes: cachedBytes);
     }
 
     // 如果没有缓存，异步读取文件
-    debugPrint('[Player] _buildImageFromBytes: 缓存未命中，从文件读取 - id=${item.id}, path=${item.uri}');
+    _logger.info('Image', '缓存未命中，从文件读取 - path=${item.uri}');
     return FutureBuilder<Uint8List?>(
       future: _loadImageBytesForPlayer(file),
       builder: (context, snapshot) {
@@ -2942,7 +3062,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
 
         if (snapshot.hasError) {
-          debugPrint('[Player] _buildImageFromBytes: 读取文件字节失败 - path=${item.uri}, error=${snapshot.error}');
+          _logger.error('Image', '读取文件字节失败 - path=${item.uri}', snapshot.error);
           return Container(
             color: Colors.black,
             alignment: Alignment.center,
@@ -2956,7 +3076,7 @@ class _PlayerPageState extends State<PlayerPage>
 
         final bytes = snapshot.data;
         if (bytes == null || bytes.isEmpty) {
-          debugPrint('[Player] _buildImageFromBytes: 文件字节为空 - path=${item.uri}');
+          _logger.error('Image', '文件字节为空 - path=${item.uri}', null);
           return Container(
             color: Colors.black,
             alignment: Alignment.center,
@@ -2970,7 +3090,10 @@ class _PlayerPageState extends State<PlayerPage>
 
         // 读取成功后，缓存起来（下次切换回来时可以直接使用）
         _preloadedImageCache[item.id] = bytes;
-        debugPrint('[Player] _buildImageFromBytes: 文件读取成功并缓存 - path=${item.uri}, size=${bytes.length} bytes');
+        _logger.info('Image', '文件读取成功并缓存 - path=${item.uri}, size=${bytes.length} bytes');
+        
+        // 记录内存使用情况
+        _logMemoryUsage();
         
         return _buildImageWidget(item: item, bytes: bytes);
       },
@@ -2980,23 +3103,22 @@ class _PlayerPageState extends State<PlayerPage>
   /// 使用原生Android解码器解码图片
   Future<Uint8List?> _decodeImageWithNative(String imagePath) async {
     try {
-      debugPrint('[Player] _decodeImageWithNative: 尝试使用原生解码器 - path=$imagePath');
+      _logger.info('Image', '尝试使用原生解码器 - path=$imagePath');
       final result = await _imageDecoderChannel.invokeMethod<Uint8List>('decodeImage', {
         'path': imagePath,
       });
       if (result != null) {
-        debugPrint('[Player] _decodeImageWithNative: 原生解码成功 - path=$imagePath, size=${result.length} bytes');
+        _logger.info('Image', '原生解码成功 - path=$imagePath, size=${result.length} bytes');
         return result;
       } else {
-        debugPrint('[Player] _decodeImageWithNative: 原生解码返回null - path=$imagePath');
+        _logger.warning('Image', '原生解码返回null - path=$imagePath');
         return null;
       }
     } on PlatformException catch (e) {
-      debugPrint('[Player] _decodeImageWithNative: 原生解码失败 - path=$imagePath, error=${e.code}: ${e.message}');
+      _logger.error('Image', '原生解码失败 - path=$imagePath, code=${e.code}', e.message);
       return null;
     } catch (e, stackTrace) {
-      debugPrint('[Player] _decodeImageWithNative: 原生解码异常 - path=$imagePath, error=$e');
-      debugPrint('[Player] _decodeImageWithNative: 堆栈: $stackTrace');
+      _logger.error('Image', '原生解码异常 - path=$imagePath', e, stackTrace);
       return null;
     }
   }
@@ -3034,13 +3156,13 @@ class _PlayerPageState extends State<PlayerPage>
         format = 'WEBP';
       }
     }
-    debugPrint('[Player] _buildImageWidget: 检测到的图片格式 - path=${item.uri}, format=$format');
+    _logger.info('Image', '图片Widget构建 - path=${item.uri}, format=$format, bytes=${bytes.length}');
     
     // 如果是系统缓存路径格式，直接使用原生解码器
     final isSystemCache = _isSystemCachePath(item.uri);
     
     if (isSystemCache) {
-      debugPrint('[Player] _buildImageWidget: 检测到系统缓存路径，使用原生解码器 - path=${item.uri}');
+      _logger.info('Image', '检测到系统缓存路径，使用原生解码器 - path=${item.uri}');
       return FutureBuilder<Uint8List?>(
         future: _decodeImageWithNative(item.uri),
         builder: (context, snapshot) {
@@ -3051,7 +3173,7 @@ class _PlayerPageState extends State<PlayerPage>
           }
           
           if (snapshot.hasError) {
-            debugPrint('[Player] _buildImageWidget: 原生解码器失败 - path=${item.uri}, error=${snapshot.error}');
+            _logger.error('Image', '原生解码器失败 - path=${item.uri}', snapshot.error);
             return Container(
               color: Colors.black,
               alignment: Alignment.center,
@@ -3065,7 +3187,7 @@ class _PlayerPageState extends State<PlayerPage>
           
           final nativeBytes = snapshot.data;
           if (nativeBytes == null || nativeBytes.isEmpty) {
-            debugPrint('[Player] _buildImageWidget: 原生解码器返回空数据 - path=${item.uri}');
+            _logger.error('Image', '原生解码器返回空数据 - path=${item.uri}', null);
             return Container(
               color: Colors.black,
               alignment: Alignment.center,
@@ -3077,12 +3199,12 @@ class _PlayerPageState extends State<PlayerPage>
             );
           }
           
-          debugPrint('[Player] _buildImageWidget: 原生解码器成功，显示图片 - path=${item.uri}, size=${nativeBytes.length} bytes');
+          _logger.info('Image', '原生解码器成功，显示图片 - path=${item.uri}, size=${nativeBytes.length} bytes');
           return Image.memory(
             nativeBytes,
             fit: BoxFit.contain,
             errorBuilder: (context, error, stackTrace) {
-              debugPrint('[Player] _buildImageWidget: 原生解码器结果也无法显示 - path=${item.uri}');
+              _logger.error('Image', '原生解码器结果也无法显示 - path=${item.uri}', error, stackTrace);
               return Container(
                 color: Colors.black,
                 alignment: Alignment.center,
@@ -3104,16 +3226,16 @@ class _PlayerPageState extends State<PlayerPage>
       fit: BoxFit.contain,
       frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
         if (wasSynchronouslyLoaded) {
-          debugPrint('[Player] _buildImageWidget: 图片同步加载完成 - path=${item.uri}');
+          _logger.info('Image', '图片同步加载完成 - path=${item.uri}');
         } else if (frame != null) {
-          debugPrint('[Player] _buildImageWidget: 图片异步加载完成 - path=${item.uri}');
+          _logger.info('Image', '图片异步加载完成 - path=${item.uri}');
         } else {
-          debugPrint('[Player] _buildImageWidget: 图片正在加载中 - path=${item.uri}');
+          _logger.info('Image', '图片正在加载中 - path=${item.uri}');
         }
         return child;
       },
       errorBuilder: (context, error, stackTrace) {
-        debugPrint('[Player] _buildImageWidget: Flutter解码失败！尝试原生解码器 - path=${item.uri}, error=$error');
+        _logger.error('Image', 'Flutter解码失败，尝试原生解码器 - path=${item.uri}', error, stackTrace);
         
         // Flutter解码失败，尝试原生解码器作为降级方案
         return FutureBuilder<Uint8List?>(
@@ -3128,7 +3250,7 @@ class _PlayerPageState extends State<PlayerPage>
             }
             
             if (nativeSnapshot.hasError) {
-              debugPrint('[Player] _buildImageWidget: 原生解码器也失败 - path=${item.uri}, error=${nativeSnapshot.error}');
+              _logger.error('Image', '原生解码器也失败 - path=${item.uri}', nativeSnapshot.error);
               return Container(
                 color: Colors.black,
                 alignment: Alignment.center,
@@ -3142,7 +3264,7 @@ class _PlayerPageState extends State<PlayerPage>
             
             final nativeBytes = nativeSnapshot.data;
             if (nativeBytes == null || nativeBytes.isEmpty) {
-              debugPrint('[Player] _buildImageWidget: 原生解码器返回空数据 - path=${item.uri}');
+              _logger.error('Image', '原生解码器返回空数据 - path=${item.uri}', null);
               return Container(
                 color: Colors.black,
                 alignment: Alignment.center,
@@ -3154,12 +3276,12 @@ class _PlayerPageState extends State<PlayerPage>
               );
             }
             
-            debugPrint('[Player] _buildImageWidget: 原生解码器成功，显示图片 - path=${item.uri}, size=${nativeBytes.length} bytes');
+            _logger.info('Image', '原生解码器成功，显示图片 - path=${item.uri}, size=${nativeBytes.length} bytes');
             return Image.memory(
               nativeBytes,
               fit: BoxFit.contain,
               errorBuilder: (context, error, stackTrace) {
-                debugPrint('[Player] _buildImageWidget: 原生解码器结果也无法显示 - path=${item.uri}');
+                _logger.error('Image', '原生解码器结果也无法显示 - path=${item.uri}', error, stackTrace);
                 return Container(
                   color: Colors.black,
                   alignment: Alignment.center,
@@ -3239,9 +3361,13 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _durationController = TextEditingController();
   final TextEditingController _playbackDurationController = TextEditingController();
   final FocusNode _durationFocusNode = FocusNode();
+  final Logger _logger = Logger();
+  final LogExporter _logExporter = LogExporter();
 
   AppSettings? _settings;
   bool _isLoading = true;
+  bool _isExportingLogs = false;
+  bool _isClearingLogs = false;
 
   @override
   void initState() {
@@ -3705,8 +3831,182 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 16),
+                    // 日志管理
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              '日志管理',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text(
+                              '导出应用日志用于问题诊断和调试',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: _isExportingLogs ? null : _exportLogs,
+                                    icon: _isExportingLogs
+                                        ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : const Icon(Icons.file_download),
+                                    label: Text(_isExportingLogs ? '导出中...' : '导出日志'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.blue,
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: _isClearingLogs ? null : _clearLogs,
+                                    icon: _isClearingLogs
+                                        ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : const Icon(Icons.delete_sweep),
+                                    label: Text(_isClearingLogs ? '清除中...' : '清除日志'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.orange,
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ],
       ),
     );
+  }
+
+  /// 导出日志
+  Future<void> _exportLogs() async {
+    setState(() {
+      _isExportingLogs = true;
+    });
+
+    try {
+      final filePath = await _logExporter.exportLogs();
+      if (mounted) {
+        // 提取文件名
+        final fileName = filePath.split(Platform.pathSeparator).last;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('日志已保存到: $fileName'),
+            duration: const Duration(seconds: 3),
+            action: SnackBarAction(
+              label: '确定',
+              onPressed: () {},
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      _logger.error('SettingsPage', '导出日志失败', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('导出失败: $e'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isExportingLogs = false;
+        });
+      }
+    }
+  }
+
+  /// 清除日志
+  Future<void> _clearLogs() async {
+    // 显示确认对话框
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认清除'),
+        content: const Text('确定要清除所有日志吗？此操作不可恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('清除', style: TextStyle(color: Colors.orange)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() {
+      _isClearingLogs = true;
+    });
+
+    try {
+      await _logger.clearAllLogs();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('日志已清除'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      _logger.error('SettingsPage', '清除日志失败', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('清除失败: $e'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isClearingLogs = false;
+        });
+      }
+    }
   }
 }

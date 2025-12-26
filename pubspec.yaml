@@ -62,6 +62,12 @@ dependencies:
   # Prevent screen from sleeping during playback.
   wakelock_plus: ^1.2.8
 
+  # Share files and content.
+  share_plus: ^9.0.0
+
+  # Archive files (zip).
+  archive: ^4.0.7
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
